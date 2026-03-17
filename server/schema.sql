@@ -1,0 +1,17 @@
+-- Cloudflare D1 Database Schema
+-- 커뮤니티 게시글 메타데이터를 저장하기 위한 테이블 구조
+
+CREATE TABLE IF NOT EXISTS posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_site TEXT NOT NULL,           -- 사이트 식별자 (예: dogdrip, dcinside)
+  title TEXT NOT NULL,                  -- 게시글 제목
+  url TEXT UNIQUE NOT NULL,             -- 원문 URL (중복 적재 방지 필수)
+  author TEXT,                          -- 작성자
+  thumbnail TEXT,                       -- 목록용 썸네일 이미지 URL (있을 경우)
+  created_at DATETIME DEFAULT (DATETIME('now', 'localtime')), -- 원문 작성 시간
+  crawled_at DATETIME DEFAULT (DATETIME('now', 'localtime'))  -- 시스템 수집 시간
+);
+
+-- 인덱스 생성: 필터링 및 정렬 성능 최적화
+CREATE INDEX IF NOT EXISTS idx_posts_source_site ON posts(source_site);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);

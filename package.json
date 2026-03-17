@@ -1,0 +1,47 @@
+{
+  "name": "review-fast",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:vite\"",
+    "dev:server": "node server/server.js",
+    "dev:vite": "vite",
+    "build": "vite build",
+    "cf:pages:deploy": "npm run build && npm exec -- wrangler pages deploy dist --project-name re-view-all",
+    "cloudflare:pages:deploy": "npm run cf:pages:deploy",
+    "deploy:cf": "npm run build && npm exec -- wrangler pages deploy dist --project-name re-view-all",
+    "deploy:cf:dry": "npm run build",
+    "cf:api:dev": "npm exec -- wrangler dev --config cloudflare/api/wrangler.toml",
+    "cf:api:deploy": "npm exec -- wrangler deploy --config cloudflare/api/wrangler.toml",
+    "cloudflare:api:deploy": "npm run cf:api:deploy",
+    "cf:api:tail": "npm exec -- wrangler tail --config cloudflare/api/wrangler.toml",
+    "cf:api:tail:readsync": "bash scripts/cf-readsync-tail.sh",
+    "cf:readsync:smoke": "bash scripts/cf-readsync-smoke.sh",
+    "cf:readsync:report": "node scripts/cf-readsync-log-report.js",
+    "cf:ingest:run": "node server/scripts/push_worker_cache.js",
+    "cf:verify:run": "node server/scripts/verify_new_items.js",
+    "cf:sync:pipeline": "node server/scripts/sync_pipeline.js",
+    "cloudflare:ingest:run": "npm run cf:ingest:run",
+    "deploy:cloudflare": "./scripts/deploy-cloudflare.sh",
+    "preview": "vite preview",
+    "server:dev": "node server/server.js",
+    "widgets:refresh": "node server/scripts/build_rail_widgets.js",
+    "backtest": "node server/scripts/backtest_adapters.js",
+    "patch:flags": "node server/scripts/patch_feed_flags.js",
+    "patch:flags:dry": "DRY_RUN=1 node server/scripts/patch_feed_flags.js",
+    "patch:text": "node server/scripts/patch_text_items.js",
+    "patch:text:dry": "DRY_RUN=1 node server/scripts/patch_text_items.js"
+  },
+  "dependencies": {
+    "sharp": "^0.34.5"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "terser": "^5.46.0",
+    "vite": "^7.3.1",
+    "wrangler": "4.68.1"
+  }
+}
