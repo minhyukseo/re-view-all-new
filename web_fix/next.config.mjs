@@ -1,8 +1,11 @@
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-  distDir: '.next_dev',
 };
+
+initOpenNextCloudflareForDev();
 
 export default nextConfig;

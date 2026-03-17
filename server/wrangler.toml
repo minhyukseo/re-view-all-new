@@ -10,9 +10,10 @@ crons = ["*/10 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "community_db"
-database_id = "your-d1-database-id-here" # 생성된 D1의 ID로 교체 필요
+database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID" # 템플릿 값입니다. Cloudflare D1의 실제 database_id로 반드시 교체하세요.
 
 [vars]
+ENVIRONMENT = "development"
 # 봇 차단 우회를 위한 User-Agent 풀
 USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",

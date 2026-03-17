@@ -8,6 +8,9 @@ node_modules
 
 # next.js
 /.next/
+/web/.next/
+/web/.next_dev/
+/web/.open-next/
 /out/
 
 # production
@@ -36,3 +39,4 @@ next-env.d.ts
 .wrangler/
 dist/
 .dev.vars
+/web/.dev.vars
