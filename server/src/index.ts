@@ -13,6 +13,12 @@ interface Post {
   title: string;
   url: string;
   author: string;
+  thumbnail?: string;
+  body_html?: string;
+  text_content?: string;
+  media_json?: string;
+  comments_json?: string;
+  detail_fetched_at?: string;
   created_at?: string;
   crawled_at?: string;
 }
@@ -53,6 +59,8 @@ const MIN_POST_OFFSET = 0;
 const TARGETS = [
   { id: "dogdrip", name: "개드립", url: "https://www.dogdrip.net/?mid=dogdrip&sort_index=popular" },
   { id: "dcinside", name: "디시인사이드", url: "https://gall.dcinside.com/board/lists/?id=dcbest&_dcbest=9" },
+  { id: "theqoo", name: "더쿠", url: "https://theqoo.net/hot/category/512000937" },
+  { id: "nate", name: "네이트판", url: "https://pann.nate.com/talk/ranking" },
 ];
 
 app.get('/api/posts', async (c) => {
@@ -84,6 +92,7 @@ app.get('/api/posts', async (c) => {
 });
 
 app.get('/api/posts/:id/detail', async (c) => {
+  await ensurePostDetailColumns(c.env.DB);
   const postId = parseInt(c.req.param('id'), 10);
   if (Number.isNaN(postId)) {
     return c.json({ success: false, error: 'Invalid post id.' }, 400);
@@ -98,6 +107,23 @@ app.get('/api/posts/:id/detail', async (c) => {
   }
 
   try {
+    if (post.text_content || post.body_html) {
+      const detail: PostDetail = {
+        id: post.id || 0,
+        sourceSite: post.source_site,
+        title: post.title,
+        author: post.author,
+        sourceUrl: post.url,
+        createdAt: post.created_at || '',
+        bodyHtml: post.body_html || '',
+        textContent: post.text_content || '',
+        media: parseStoredJson<MediaItem[]>(post.media_json, []),
+        comments: parseStoredJson<CommentItem[]>(post.comments_json, []),
+      };
+
+      return c.json({ success: true, result: detail });
+    }
+
     const detail = await fetchPostDetail(post, c.env);
     return c.json({ success: true, result: detail });
   } catch (error: any) {
@@ -145,13 +171,51 @@ async function insertPostsBatch(db: D1Database, posts: Post[]) {
   console.log(`[Batch Insert] Attempting to insert ${posts.length} posts...`);
 
   const stmt = db.prepare(
-    "INSERT OR IGNORE INTO posts (source_site, title, url, author) VALUES (?, ?, ?, ?)"
+    `INSERT INTO posts (
+      source_site,
+      title,
+      url,
+      author,
+      thumbnail,
+      created_at,
+      body_html,
+      text_content,
+      media_json,
+      comments_json,
+      detail_fetched_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(url) DO UPDATE SET
+      source_site = excluded.source_site,
+      title = excluded.title,
+      author = excluded.author,
+      thumbnail = COALESCE(excluded.thumbnail, posts.thumbnail),
+      created_at = COALESCE(excluded.created_at, posts.created_at),
+      body_html = COALESCE(excluded.body_html, posts.body_html),
+      text_content = COALESCE(excluded.text_content, posts.text_content),
+      media_json = COALESCE(excluded.media_json, posts.media_json),
+      comments_json = COALESCE(excluded.comments_json, posts.comments_json),
+      detail_fetched_at = COALESCE(excluded.detail_fetched_at, posts.detail_fetched_at),
+      crawled_at = DATETIME('now', 'localtime')`
   );
 
   const batchSize = 50;
   for (let i = 0; i < posts.length; i += batchSize) {
     const chunk = posts.slice(i, i + batchSize);
-    const statements = chunk.map(p => stmt.bind(p.source_site, p.title, p.url, p.author));
+    const statements = chunk.map((p) =>
+      stmt.bind(
+        p.source_site,
+        p.title,
+        p.url,
+        p.author,
+        p.thumbnail ?? null,
+        p.created_at ?? null,
+        p.body_html ?? null,
+        p.text_content ?? null,
+        p.media_json ?? null,
+        p.comments_json ?? null,
+        p.detail_fetched_at ?? null,
+      )
+    );
     try {
        await db.batch(statements);
        console.log(`[Batch Insert] Successfully processed chunk ${i / batchSize + 1}`);
@@ -163,44 +227,115 @@ async function insertPostsBatch(db: D1Database, posts: Post[]) {
 
 function parseSitePosts(siteId: string, html: string): Post[] {
   const posts: Post[] = [];
+  const seenUrls = new Set<string>();
   try {
     const $ = load(html);
 
     if (siteId === 'dogdrip') {
-      $('tr').each((_, row) => {
-        const $row = $(row);
-        const titleCell = $row.find('td.title, .title').first();
-        const link = titleCell.find('a').first();
+      $('a.title-link[data-document-srl]').each((_, linkElement) => {
+        const link = $(linkElement);
+        const $row = link.closest('tr');
         const title = link.text().trim();
         const rawUrl = link.attr('href');
         const url = normalizeUrl(rawUrl, 'https://www.dogdrip.net');
         const author =
           $row.find('td.author a').first().text().trim() ||
+          $row.find('.author .nickname').first().text().trim() ||
           $row.find('td.author').first().text().trim() ||
           '익명';
 
-        if (!title || !url || url.includes('notice')) {
+        if (!title || !url || url.includes('notice') || seenUrls.has(url)) {
           return;
         }
 
+        seenUrls.add(url);
         posts.push({ source_site: siteId, title, url, author });
       });
     } else if (siteId === 'dcinside') {
       $('.ub-content').each((_, row) => {
         const $row = $(row);
-        const link = $row.find('.gall_tit a').first();
+        const numberText = $row.find('.gall_num').first().text().trim();
+        const link = $row.find('.gall_tit a[view-msg]').first();
         const title = link.text().trim();
         const url = normalizeUrl(link.attr('href'), 'https://gall.dcinside.com');
         const author =
           $row.find('.gall_writer').attr('data-nick') ||
+          $row.find('.gall_writer .nickname em').first().text().trim() ||
           $row.find('.gall_writer').text().trim() ||
           '익명';
+        const createdAt =
+          $row.find('.gall_date').attr('title') ||
+          $row.find('.gall_date').text().trim() ||
+          '';
+        const thumbnail = normalizeUrl(
+          $row.find('.gall_tit img').first().attr('src') ||
+          $row.find('.gall_tit img').first().attr('data-src'),
+          'https://gall.dcinside.com'
+        );
 
-        if (!title || !url) {
+        if (
+          numberText === '공지' ||
+          !title ||
+          !url ||
+          url.startsWith('javascript:') ||
+          seenUrls.has(url)
+        ) {
           return;
         }
 
-        posts.push({ source_site: siteId, title, url, author });
+        seenUrls.add(url);
+        posts.push({
+          source_site: siteId,
+          title,
+          url,
+          author,
+          created_at: createdAt,
+          thumbnail: thumbnail || undefined,
+        });
+      });
+    } else if (siteId === 'theqoo') {
+      $('table.theqoo_board_table tbody tr').each((_, row) => {
+        const $row = $(row);
+        if ($row.hasClass('notice') || $row.hasClass('notice_expand')) {
+          return;
+        }
+
+        const titleLink = $row.find('td.title > a').first();
+        const title = titleLink.text().trim();
+        const url = normalizeUrl(titleLink.attr('href'), 'https://theqoo.net');
+
+        if (!title || !url || seenUrls.has(url)) {
+          return;
+        }
+
+        seenUrls.add(url);
+        posts.push({
+          source_site: siteId,
+          title,
+          url,
+          author: '무명의 더쿠',
+        });
+      });
+    } else if (siteId === 'nate') {
+      $('.cntList ul.post_wrap > li').each((_, item) => {
+        const $item = $(item);
+        const link = $item.find('dt h2 a').first();
+        const title = link.attr('title')?.trim() || link.text().trim();
+        const url = normalizeUrl(link.attr('href'), 'https://pann.nate.com');
+        const thumbnail = normalizeUrl($item.find('.thumb img').attr('src'), 'https://pann.nate.com');
+
+        if (!title || !url || seenUrls.has(url)) {
+          return;
+        }
+
+        seenUrls.add(url);
+        posts.push({
+          source_site: siteId,
+          title,
+          url,
+          author: '익명',
+          thumbnail: thumbnail || undefined,
+        });
       });
     }
   } catch (error) {
@@ -210,6 +345,7 @@ function parseSitePosts(siteId: string, html: string): Post[] {
 }
 
 async function handleCrawling(env: Bindings) {
+  await ensurePostDetailColumns(env.DB);
   let allPosts: Post[] = [];
   for (const target of TARGETS) {
     try {
@@ -233,7 +369,30 @@ async function handleCrawling(env: Bindings) {
       const html = await response.text();
       const sitePosts = parseSitePosts(target.id, html);
       console.log(`[Crawler] Parsed ${sitePosts.length} posts from ${target.name}`);
-      allPosts = allPosts.concat(sitePosts);
+
+      const enrichedPosts = await Promise.all(
+        sitePosts.map(async (post) => {
+          try {
+            const detail = await fetchPostDetail(post, env);
+            return {
+              ...post,
+              title: detail.title || post.title,
+              author: detail.author || post.author,
+              body_html: detail.bodyHtml,
+              text_content: detail.textContent,
+              media_json: JSON.stringify(detail.media),
+              comments_json: JSON.stringify(detail.comments),
+              detail_fetched_at: new Date().toISOString(),
+              created_at: detail.createdAt || post.created_at,
+            } satisfies Post;
+          } catch (detailError) {
+            console.error(`[Crawler] Failed to fetch detail for ${post.url}:`, detailError);
+            return post;
+          }
+        })
+      );
+
+      allPosts = allPosts.concat(enrichedPosts);
     } catch (error) {
        console.error(`[Crawler] Error processing ${target.name}:`, error);
     }
@@ -245,8 +404,20 @@ async function handleCrawling(env: Bindings) {
 }
 
 async function fetchPostDetail(post: Post, env: Bindings): Promise<PostDetail> {
+  if (post.source_site === 'dogdrip') {
+    return fetchDogdripDetail(post, env);
+  }
+
   if (post.source_site === 'dcinside') {
     return fetchDcinsideDetail(post, env);
+  }
+
+  if (post.source_site === 'theqoo') {
+    return fetchTheqooDetail(post, env);
+  }
+
+  if (post.source_site === 'nate') {
+    return fetchNateDetail(post, env);
   }
 
   return fetchGenericDetail(post, env);
@@ -372,6 +543,135 @@ async function fetchGenericDetail(post: Post, env: Bindings): Promise<PostDetail
   };
 }
 
+function parseDogdripComments($: ReturnType<typeof load>): CommentItem[] {
+  const comments: CommentItem[] = [];
+
+  $('.comment-item').each((_, element) => {
+    const item = $(element);
+    const id = item.attr('id')?.replace(/^comment_/, '') || '';
+    const author =
+      item.find('.comment-bar a').first().text().trim() ||
+      item.find('.comment-bar').first().text().trim() ||
+      '익명';
+    const bodyHtml = item.find('.xe_content').first().html() || '';
+    const body = extractTextWithBreaks(bodyHtml);
+    const createdAt = item.find('time').attr('datetime') || item.find('time').text().trim() || '';
+    const depth = item.hasClass('depth') ? 1 : 0;
+
+    if (!id || !body) return;
+
+    comments.push({
+      id,
+      author,
+      body,
+      createdAt,
+      depth,
+    });
+  });
+
+  return comments;
+}
+
+async function fetchDogdripDetail(post: Post, env: Bindings): Promise<PostDetail> {
+  const { html } = await fetchText(post.url, env, 'https://www.dogdrip.net/');
+  const $ = load(html);
+  const sourceUrl =
+    normalizeUrl($('.article-head .fa-link').parent().find('a').attr('href'), 'https://www.dogdrip.net') ||
+    normalizeUrl($('link[rel="canonical"]').attr('href'), 'https://www.dogdrip.net') ||
+    post.url;
+
+  const title = $('.article-head h4 a').first().text().trim() || post.title;
+  const author =
+    $('.title-toolbar a[href="#popup_menu_area"]').first().text().trim() ||
+    post.author;
+  const createdAt =
+    $('.title-toolbar .fa-clock').closest('span').next('span').text().trim() ||
+    $('.title-toolbar .text-muted').eq(1).text().trim() ||
+    post.created_at ||
+    '';
+  const content = $('.article-wrapper .rhymix_content.xe_content').first().length
+    ? $('.article-wrapper .rhymix_content.xe_content').first()
+    : $('.rhymix_content.xe_content').first();
+  const bodyHtml = (content.html() || '').trim();
+  const textContent = extractTextWithBreaks(bodyHtml);
+  const media = extractMedia(content, sourceUrl);
+  const comments = parseDogdripComments($);
+
+  return {
+    id: post.id || 0,
+    sourceSite: post.source_site,
+    title,
+    author,
+    sourceUrl,
+    createdAt,
+    bodyHtml,
+    textContent,
+    media,
+    comments,
+  };
+}
+
+async function ensurePostDetailColumns(db: D1Database) {
+  const statements = [
+    'ALTER TABLE posts ADD COLUMN thumbnail TEXT',
+    'ALTER TABLE posts ADD COLUMN body_html TEXT',
+    'ALTER TABLE posts ADD COLUMN text_content TEXT',
+    'ALTER TABLE posts ADD COLUMN media_json TEXT',
+    'ALTER TABLE posts ADD COLUMN comments_json TEXT',
+    'ALTER TABLE posts ADD COLUMN detail_fetched_at DATETIME',
+  ];
+
+  for (const sql of statements) {
+    try {
+      await db.exec(sql);
+    } catch (error: any) {
+      if (!String(error?.message || error).includes('duplicate column name')) {
+        throw error;
+      }
+    }
+  }
+}
+
+function parseStoredJson<T>(rawValue: string | null | undefined, fallback: T): T {
+  if (!rawValue) return fallback;
+
+  try {
+    return JSON.parse(rawValue) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseNateComments($scope: ReturnType<typeof load>): CommentItem[] {
+  const comments: CommentItem[] = [];
+
+  $scope('dl.cmt_item').each((_, element) => {
+    const item = $scope(element);
+    const rawId = item.find('dd.usertxt').attr('id') || item.attr('id') || '';
+    const id = rawId.match(/(\d+)/)?.[1] || '';
+    const author =
+      item.find('.nameui').first().attr('title') ||
+      item.find('.nameui').first().text().trim() ||
+      '익명';
+    const body = item.find('dd.usertxt span').first().text().replace(/\s+/g, ' ').trim();
+    const createdAt = item.find('dt i').first().text().trim();
+
+    if (!id || !body) {
+      return;
+    }
+
+    comments.push({
+      id,
+      author,
+      body,
+      createdAt,
+      depth: 0,
+    });
+  });
+
+  return comments;
+}
+
 function parseDcComments(rawComments: any[]): CommentItem[] {
   if (!Array.isArray(rawComments)) return [];
 
@@ -398,7 +698,10 @@ async function fetchDcinsideDetail(post: Post, env: Bindings): Promise<PostDetai
   const sourceUrl = post.url;
 
   const title = $('.title_subject').first().text().trim() || post.title;
-  const author = $('.gall_writer[data-loc="view"]').first().attr('data-nick') || post.author;
+  const author =
+    $('.gallview_head .gall_writer[data-loc="view"] .nickname em').first().text().trim() ||
+    $('.gall_writer[data-loc="view"]').first().attr('data-nick') ||
+    post.author;
   const createdAt = $('.gall_date').first().attr('title') || post.created_at || '';
   const content = $('.writing_view_box .write_div').first();
   const bodyHtml = (content.html() || '').trim();
@@ -454,6 +757,78 @@ async function fetchDcinsideDetail(post: Post, env: Bindings): Promise<PostDetai
       comments = parseDcComments(commentJson.comments || []);
     }
   }
+
+  return {
+    id: post.id || 0,
+    sourceSite: post.source_site,
+    title,
+    author,
+    sourceUrl,
+    createdAt,
+    bodyHtml,
+    textContent,
+    media,
+    comments,
+  };
+}
+
+async function fetchTheqooDetail(post: Post, env: Bindings): Promise<PostDetail> {
+  const { html } = await fetchText(post.url, env, 'https://theqoo.net/hot/category/512000937');
+  const $ = load(html);
+  const sourceUrl =
+    $('meta[property="og:url"]').attr('content')?.trim() ||
+    normalizeUrl($('link[rel="canonical"]').attr('href'), 'https://theqoo.net') ||
+    post.url;
+  const title =
+    $('meta[property="og:title"]').attr('content')?.trim() ||
+    post.title;
+  const meta = $('.btm_area.clear').first();
+  const author =
+    meta.find('.side').first().contents().first().text().replace(/\s+/g, ' ').trim() ||
+    post.author;
+  const createdAt =
+    meta.find('.side.fr span').first().text().trim() ||
+    post.created_at ||
+    '';
+  const content = $('.rd_body .xe_content').first();
+  const bodyHtml = (content.html() || '').trim();
+  const textContent = extractTextWithBreaks(bodyHtml);
+  const media = extractMedia(content, sourceUrl);
+
+  return {
+    id: post.id || 0,
+    sourceSite: post.source_site,
+    title,
+    author,
+    sourceUrl,
+    createdAt,
+    bodyHtml,
+    textContent,
+    media,
+    comments: [],
+  };
+}
+
+async function fetchNateDetail(post: Post, env: Bindings): Promise<PostDetail> {
+  const { html } = await fetchText(post.url, env, 'https://pann.nate.com/talk/ranking');
+  const $ = load(html);
+  const sourceUrl = post.url;
+
+  const title =
+    $('.post-tit-info > h1').first().clone().find('img').remove().end().text().trim() ||
+    post.title;
+  const author = $('.post-tit-info .info .writer').first().text().trim() || post.author;
+  const createdAt = $('.post-tit-info .info .date').first().text().trim() || post.created_at || '';
+  const content = $('#contentArea').first();
+  const bodyHtml = (content.html() || '').trim();
+  const textContent = extractTextWithBreaks(bodyHtml);
+  const media = extractMedia(content, sourceUrl).filter((item) => !item.url.includes('pann3.link/'));
+
+  const bestComments = parseNateComments(load($('#bepleDiv').html() || ''));
+  const generalComments = parseNateComments(load($('#commentDiv').html() || ''));
+  const comments = [...bestComments, ...generalComments].filter((comment, index, list) =>
+    list.findIndex((candidate) => candidate.id === comment.id) === index
+  );
 
   return {
     id: post.id || 0,
