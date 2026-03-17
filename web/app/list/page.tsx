@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { PostCard } from "@/components/PostCard";
 import { buildApiUrl } from "@/lib/api";
 import { Activity, Thermometer, DollarSign, Filter, RefreshCw } from "lucide-react";
@@ -15,6 +15,8 @@ interface Post {
   created_at: string;
 }
 
+const PAGE_SIZE = 24;
+
 const COMMUNITIES = [
   { id: "dogdrip", name: "개드립" },
   { id: "dcinside", name: "디시인사이드" },
@@ -22,6 +24,7 @@ const COMMUNITIES = [
   { id: "arcalive", name: "아카라이브" },
   { id: "theqoo", name: "더쿠" },
   { id: "ruliweb", name: "루리웹" },
+  { id: "ppomppu", name: "뽐뿌" },
   { id: "clien", name: "클리앙" },
   { id: "inven", name: "인벤" },
   { id: "pgr21", name: "PGR21" },
@@ -35,29 +38,102 @@ const COMMUNITIES = [
 export default function ListPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedCommunities, setSelectedCommunities] = useState<string[]>(
     COMMUNITIES.map(c => c.id)
   );
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const requestInFlightRef = useRef(false);
 
-  const fetchPosts = async () => {
-    setIsLoading(true);
+  const fetchPosts = useCallback(async (nextOffset = 0, mode: "replace" | "append" = "replace") => {
+    if (requestInFlightRef.current) {
+      return;
+    }
+
+    if (selectedCommunities.length === 0) {
+      setPosts([]);
+      setOffset(0);
+      setHasMore(false);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      return;
+    }
+
+    requestInFlightRef.current = true;
+    if (mode === "replace") {
+      setIsLoading(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+
     try {
-      const res = await fetch(buildApiUrl("/api/posts?limit=100"), { cache: "no-store" });
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(nextOffset),
+      });
+
+      if (selectedCommunities.length > 0) {
+        params.set("sources", selectedCommunities.join(","));
+      }
+
+      const res = await fetch(buildApiUrl(`/api/posts?${params.toString()}`), { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        setPosts(data.results || []);
+        const nextPosts = data.results || [];
+
+        setPosts(prev => mode === "replace" ? nextPosts : [...prev, ...nextPosts]);
+        setHasMore(Boolean(data.hasMore));
+        setOffset(data.nextOffset || nextOffset + nextPosts.length);
       }
     } catch (err) {
       console.error("Failed to load posts:", err);
     } finally {
-      setIsLoading(false);
+      requestInFlightRef.current = false;
+      if (mode === "replace") {
+        setIsLoading(false);
+      } else {
+        setIsLoadingMore(false);
+      }
     }
-  };
+  }, [selectedCommunities]);
 
   useEffect(() => {
-    fetchPosts();
-  }, []);
+    setPosts([]);
+    setOffset(0);
+    setHasMore(true);
+    fetchPosts(0, "replace");
+  }, [fetchPosts]);
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    const root = listContainerRef.current;
+    if (!node || !hasMore || isLoading || isLoadingMore) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) {
+          return;
+        }
+
+        fetchPosts(offset, "append");
+      },
+      {
+        root,
+        rootMargin: "400px 0px",
+        threshold: 0,
+      }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fetchPosts, hasMore, isLoading, isLoadingMore, offset]);
 
   const toggleCommunity = (id: string) => {
     setSelectedCommunities(prev => 
@@ -65,7 +141,7 @@ export default function ListPage() {
     );
   };
 
-  const filteredPosts = posts.filter(post => selectedCommunities.includes(post.source_site));
+  const filteredPosts = posts;
   const hasActiveFilters = selectedCommunities.length > 0;
   const emptyState = posts.length === 0
     ? {
@@ -150,16 +226,21 @@ export default function ListPage() {
             <button className="px-4 py-1.5 text-zinc-400 hover:text-white rounded-full text-sm font-medium transition-all">Latest</button>
           </div>
           <button 
-            onClick={fetchPosts}
-            disabled={isLoading}
+            onClick={() => {
+              setPosts([]);
+              setOffset(0);
+              setHasMore(true);
+              fetchPosts(0, "replace");
+            }}
+            disabled={isLoading || isLoadingMore}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-sm font-bold hover:bg-indigo-500/20 transition-all disabled:opacity-50"
           >
-            <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
-            {isLoading ? "Refreshing..." : "Auto-Refresh"}
+            <RefreshCw size={14} className={isLoading || isLoadingMore ? "animate-spin" : ""} />
+            {isLoading || isLoadingMore ? "Refreshing..." : "새로고침"}
           </button>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-20 custom-scrollbar">
+        <div ref={listContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 pb-20 custom-scrollbar">
           {isLoading ? (
             <div className="flex items-center justify-center h-40 text-zinc-500 animate-pulse font-medium">
               게시글을 불러오는 중입니다...
@@ -175,6 +256,12 @@ export default function ListPage() {
                <p className="text-xs mt-1">{emptyState.description}</p>
             </div>
           )}
+
+          {!isLoading && filteredPosts.length > 0 ? (
+            <div ref={sentinelRef} className="py-6 text-center text-xs text-zinc-500">
+              {isLoadingMore ? "게시글을 더 불러오는 중입니다..." : hasMore ? "스크롤하면 더 불러옵니다." : "마지막 게시글까지 확인했습니다."}
+            </div>
+          ) : null}
         </div>
       </section>
 

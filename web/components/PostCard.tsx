@@ -16,6 +16,10 @@ const SITE_COLORS: Record<string, string> = {
   dcinside: "text-purple-400 bg-purple-400/10 border-purple-400/20",
   theqoo: "text-pink-400 bg-pink-400/10 border-pink-400/20",
   nate: "text-red-400 bg-red-400/10 border-red-400/20",
+  ppomppu: "text-amber-400 bg-amber-400/10 border-amber-400/20",
+  mlbpark: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20",
+  ruliweb: "text-lime-400 bg-lime-400/10 border-lime-400/20",
+  bobaedream: "text-orange-400 bg-orange-400/10 border-orange-400/20",
   fmkorea: "text-sky-400 bg-sky-400/10 border-sky-400/20",
   arcalive: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20",
 };
@@ -25,6 +29,10 @@ const SITE_LABELS: Record<string, string> = {
   nate: "네이트판",
   theqoo: "더쿠",
   dcinside: "디시인사이드",
+  ppomppu: "뽐뿌",
+  mlbpark: "엠팍",
+  ruliweb: "루리웹",
+  bobaedream: "보배드림",
   fmkorea: "에펨코리아",
   arcalive: "아카라이브",
 };

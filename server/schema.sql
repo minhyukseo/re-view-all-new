@@ -17,20 +17,6 @@ CREATE TABLE IF NOT EXISTS posts (
   crawled_at DATETIME DEFAULT (DATETIME('now', 'localtime'))  -- 시스템 수집 시간
 );
 
-CREATE TABLE IF NOT EXISTS post_contents (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  post_url TEXT UNIQUE NOT NULL,
-  source_site TEXT NOT NULL,
-  title TEXT,
-  author TEXT,
-  content_html TEXT,
-  content_text TEXT,
-  media_json TEXT,
-  created_at TEXT,
-  crawled_at DATETIME DEFAULT (DATETIME('now', 'localtime'))
-);
-
 -- 인덱스 생성: 필터링 및 정렬 성능 최적화
 CREATE INDEX IF NOT EXISTS idx_posts_source_site ON posts(source_site);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
-CREATE INDEX IF NOT EXISTS idx_post_contents_source_site ON post_contents(source_site);

@@ -1,0 +1,7 @@
+name = "re-view-all-edge-worker"
+main = "src/index.ts"
+compatibility_date = "2026-03-17"
+
+[vars]
+ENVIRONMENT = "development"
+API_ORIGIN = "http://localhost:8787"
