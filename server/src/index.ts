@@ -1,5 +1,26 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { load } from 'cheerio';
+
+// Cloudflare Workers D1 Types (if @cloudflare/workers-types is not available as import)
+interface D1PreparedStatement {
+  bind(...values: any[]): D1PreparedStatement;
+  first<T = unknown>(colName?: string): Promise<T | null>;
+  run<T = unknown>(): Promise<{ success: boolean; results?: T[]; error?: string }>;
+  all<T = unknown>(): Promise<{ success: boolean; results?: T[]; error?: string }>;
+}
+
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  dump(): Promise<ArrayBuffer>;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<any[]>;
+  exec(query: string): Promise<any>;
+}
+
+// Cheerio Types
+type Cheerio<T> = any;
+type CheerioAPI = any;
+type Element = any;
 
 type Bindings = {
   DB: D1Database;
@@ -50,6 +71,8 @@ interface PostDetail {
 }
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+app.use('*', cors());
 
 const DEFAULT_POST_LIMIT = 20;
 const MAX_POST_LIMIT = 100;
@@ -118,7 +141,6 @@ app.get('/api/posts', async (c) => {
 });
 
 app.get('/api/posts/:id/detail', async (c) => {
-  await ensurePostDetailColumns(c.env.DB);
   const postId = parseInt(c.req.param('id'), 10);
   if (Number.isNaN(postId)) {
     return c.json({ success: false, error: 'Invalid post id.' }, 400);
@@ -126,16 +148,20 @@ app.get('/api/posts/:id/detail', async (c) => {
 
   const post = await c.env.DB.prepare(
     'SELECT * FROM posts WHERE id = ?'
-  ).bind(postId).first<Post>();
+  ).bind(postId).first() as Post | null;
 
   if (!post) {
-    return c.json({ success: false, error: 'Post not found.' }, 404);
+    return c.json({ success: false, error: 'Post not found' }, 404);
   }
 
-  try {
-    if (post.text_content || post.body_html) {
-      const detail: PostDetail = {
-        id: post.id || 0,
+  // Since text_content or body_html are already there, return directly
+  if (post.text_content || post.body_html) {
+    const media = parseStoredJson<MediaItem[]>(post.media_json, []);
+    const comments = parseStoredJson<CommentItem[]>(post.comments_json, []);
+    return c.json({
+      success: true,
+      result: {
+        id: post.id,
         sourceSite: post.source_site,
         title: post.title,
         author: post.author,
@@ -145,15 +171,18 @@ app.get('/api/posts/:id/detail', async (c) => {
         textContent: post.text_content || '',
         media: parseStoredJson<MediaItem[]>(post.media_json, []),
         comments: parseStoredJson<CommentItem[]>(post.comments_json, []),
-      };
+      },
+    });
+  }
 
-      return c.json({ success: true, result: detail });
-    }
-
+  try {
     const detail = await fetchPostDetail(post, c.env);
     return c.json({ success: true, result: detail });
   } catch (error: any) {
-    return c.json({ success: false, error: error.message }, 500);
+    if (c.env.ENVIRONMENT === 'development') {
+      return c.json({ success: false, error: error.message }, 500);
+    }
+    return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
 
@@ -172,9 +201,81 @@ app.get('/api/trigger-crawler', async (c) => {
   }
 });
 
-app.get('/api/backfill-missing-details', async (c) => {
-  await ensurePostDetailColumns(c.env.DB);
+app.get('/api/crawl-site/:siteId', async (c) => {
+  const siteId = c.req.param('siteId');
+  const target = TARGETS.find((t) => t.id === siteId);
 
+  if (!target) {
+    return c.json({ success: false, error: `Unknown site: ${siteId}` }, 404);
+  }
+
+  try {
+    console.log(`[Crawler] Fetching ${target.name}...`);
+    const response = await fetch(target.url, {
+      headers: buildHeaders(c.env, target.url),
+    });
+
+    if (!response.ok) {
+      return c.json({ success: false, error: `Failed to fetch ${target.name}: ${response.status}` }, 500);
+    }
+
+    const html = target.id === 'etoland'
+      ? new TextDecoder('euc-kr').decode(await response.arrayBuffer())
+      : await response.text();
+    const sitePosts = parseSitePosts(target.id, html);
+    console.log(`[Crawler] Parsed ${sitePosts.length} posts from ${target.name}`);
+
+    const pendingPosts = await filterPendingPosts(c.env.DB, sitePosts);
+    console.log(`[Crawler] ${pendingPosts.length} new posts to fetch detail for`);
+
+    const enrichedPosts = await mapWithConcurrency(
+      pendingPosts,
+      DETAIL_FETCH_CONCURRENCY,
+      async (post) => {
+        try {
+          const detail = await fetchPostDetail(post, c.env);
+          const fallbackThumbnail = post.thumbnail || detail.media.find((item) => item.type === 'image')?.url;
+          return {
+            ...post,
+            title: detail.title || post.title,
+            author: detail.author || post.author,
+            thumbnail: fallbackThumbnail,
+            body_html: detail.bodyHtml,
+            text_content: detail.textContent,
+            media_json: JSON.stringify(detail.media),
+            comments_json: JSON.stringify(detail.comments),
+            detail_fetched_at: new Date().toISOString(),
+            created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
+          } satisfies Post;
+        } catch (detailError) {
+          console.error(`[Crawler] Failed to fetch detail for ${post.url}:`, detailError);
+          return post;
+        }
+      }
+    );
+
+    if (enrichedPosts.length > 0) {
+      await insertPostsBatch(c.env.DB, enrichedPosts);
+    }
+
+    return c.json({
+      success: true,
+      site: siteId,
+      parsed: sitePosts.length,
+      newPosts: pendingPosts.length,
+      inserted: enrichedPosts.length,
+    });
+  } catch (error: any) {
+    const isDevelopment = (c.env.ENVIRONMENT || 'production') === 'development';
+    return c.json({
+      success: false,
+      error: error.message,
+      ...(isDevelopment && error?.stack ? { stack: error.stack } : {}),
+    }, 500);
+  }
+});
+
+app.get('/api/backfill-missing-details', async (c) => {
   const limit = parseBoundedInteger(c.req.query('limit'), {
     defaultValue: 50,
     min: 1,
@@ -727,8 +828,6 @@ function parseSitePosts(siteId: string, html: string): Post[] {
 }
 
 async function handleCrawling(env: Bindings) {
-  await ensurePostDetailColumns(env.DB);
-
   for (const target of TARGETS) {
     try {
       console.log(`[Crawler] Fetching ${target.name}...`);
@@ -1074,7 +1173,7 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function extractMedia($root: any, baseUrl: string): MediaItem[] {
+function extractMedia($root: Cheerio<Element>, baseUrl: string): MediaItem[] {
   const items: MediaItem[] = [];
   const seen = new Set<string>();
   const imageNodes = $root.find('img').add($root.filter('img'));
@@ -1083,7 +1182,10 @@ function extractMedia($root: any, baseUrl: string): MediaItem[] {
 
   for (let index = 0; index < imageNodes.length; index += 1) {
     const node = imageNodes.eq(index);
-    const src = normalizeUrl(node.attr('src') || node.attr('data-src'), baseUrl);
+    const src = normalizeUrl(
+      node.attr('data-original') || node.attr('src') || node.attr('data-src'),
+      baseUrl
+    );
     if (!src || seen.has(src)) continue;
     seen.add(src);
     items.push({ type: 'image', url: src });
@@ -1122,9 +1224,9 @@ function extractTextWithBreaks(html: string): string {
 }
 
 function pickFirstContent(
-  $: ReturnType<typeof load>,
+  $: CheerioAPI,
   selectors: string[],
-): ReturnType<typeof load> | null {
+): Cheerio<Element> | null {
   for (const selector of selectors) {
     const match = $(selector).first();
     if (match.length) {
@@ -1153,7 +1255,7 @@ async function fetchGenericDetail(post: Post, env: Bindings): Promise<PostDetail
     '#content',
   ];
 
-  let $content = $('body');
+  let $content: Cheerio<Element> = $('body');
   for (const selector of candidates) {
     const match = $(selector).first();
     if (match.length) {
@@ -1179,7 +1281,7 @@ async function fetchGenericDetail(post: Post, env: Bindings): Promise<PostDetail
   };
 }
 
-function parseDogdripComments($: ReturnType<typeof load>): CommentItem[] {
+function parseDogdripComments($: CheerioAPI): CommentItem[] {
   const comments: CommentItem[] = [];
 
   $('.comment-item').each((_, element) => {
@@ -1247,26 +1349,7 @@ async function fetchDogdripDetail(post: Post, env: Bindings): Promise<PostDetail
   };
 }
 
-async function ensurePostDetailColumns(db: D1Database) {
-  const statements = [
-    'ALTER TABLE posts ADD COLUMN thumbnail TEXT',
-    'ALTER TABLE posts ADD COLUMN body_html TEXT',
-    'ALTER TABLE posts ADD COLUMN text_content TEXT',
-    'ALTER TABLE posts ADD COLUMN media_json TEXT',
-    'ALTER TABLE posts ADD COLUMN comments_json TEXT',
-    'ALTER TABLE posts ADD COLUMN detail_fetched_at DATETIME',
-  ];
 
-  for (const sql of statements) {
-    try {
-      await db.exec(sql);
-    } catch (error: any) {
-      if (!String(error?.message || error).includes('duplicate column name')) {
-        throw error;
-      }
-    }
-  }
-}
 
 function parseStoredJson<T>(rawValue: string | null | undefined, fallback: T): T {
   if (!rawValue) return fallback;
@@ -1389,7 +1472,7 @@ async function fetchDcinsideDetail(post: Post, env: Bindings): Promise<PostDetai
     });
 
     if (commentResponse.ok) {
-      const commentJson = await commentResponse.json<any>();
+      const commentJson = (await commentResponse.json()) as any;
       comments = parseDcComments(commentJson.comments || []);
     }
   }

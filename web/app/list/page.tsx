@@ -20,19 +20,15 @@ const PAGE_SIZE = 24;
 const COMMUNITIES = [
   { id: "dogdrip", name: "개드립" },
   { id: "dcinside", name: "디시인사이드" },
-  { id: "fmkorea", name: "에펨코리아" },
-  { id: "arcalive", name: "아카라이브" },
   { id: "theqoo", name: "더쿠" },
   { id: "ruliweb", name: "루리웹" },
   { id: "ppomppu", name: "뽐뿌" },
-  { id: "clien", name: "클리앙" },
-  { id: "inven", name: "인벤" },
-  { id: "pgr21", name: "PGR21" },
   { id: "mlbpark", name: "엠엘비파크" },
-  { id: "instiz", name: "인스티즈" },
-  { id: "humoruniv", name: "유머대학" },
-  { id: "slrclub", name: "SLR클럽" },
   { id: "bobaedream", name: "보배드림" },
+  { id: "todayhumor", name: "오늘의유머" },
+  { id: "nate", name: "네이트판" },
+  { id: "aagag", name: "AAGAG" },
+  { id: "etoland", name: "이토랜드" },
 ];
 
 export default function ListPage() {
@@ -45,6 +41,7 @@ export default function ListPage() {
   const [selectedCommunities, setSelectedCommunities] = useState<string[]>(
     COMMUNITIES.map(c => c.id)
   );
+  const [error, setError] = useState<string | null>(null);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const requestInFlightRef = useRef(false);
@@ -82,15 +79,19 @@ export default function ListPage() {
 
       const res = await fetch(buildApiUrl(`/api/posts?${params.toString()}`), { cache: "no-store" });
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json()) as any;
         const nextPosts = data.results || [];
 
         setPosts(prev => mode === "replace" ? nextPosts : [...prev, ...nextPosts]);
         setHasMore(Boolean(data.hasMore));
         setOffset(data.nextOffset || nextOffset + nextPosts.length);
+      } else {
+        const errorData = await res.json();
+        throw new Error(errorData.message || `API Error: ${res.status}`);
       }
     } catch (err) {
       console.error("Failed to load posts:", err);
+      setError("게시글을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
       requestInFlightRef.current = false;
       if (mode === "replace") {
@@ -244,6 +245,20 @@ export default function ListPage() {
           {isLoading ? (
             <div className="flex items-center justify-center h-40 text-zinc-500 animate-pulse font-medium">
               게시글을 불러오는 중입니다...
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center h-64 text-red-400">
+               <span className="text-4xl mb-4">⚠️</span>
+               <p className="font-medium">{error}</p>
+               <button 
+                 onClick={() => {
+                   setError(null);
+                   fetchPosts(0, "replace");
+                 }}
+                 className="mt-4 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-full text-sm font-bold hover:bg-red-500/20 transition-all"
+               >
+                 다시 시도
+               </button>
             </div>
           ) : filteredPosts.length > 0 ? (
             filteredPosts.map((post) => (

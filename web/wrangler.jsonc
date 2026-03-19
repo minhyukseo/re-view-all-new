@@ -1,9 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "re-view-all-web",
+  "account_id": "471fe81411e02b33be00b3e1ad1f1899",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-03-17",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "binding": "ASSETS",
     "directory": ".open-next/assets"
@@ -12,6 +13,6 @@
     "enabled": true
   },
   "vars": {
-    "NEXT_PUBLIC_API_BASE_URL": "https://community-aggregator.YOUR_SUBDOMAIN.workers.dev"
+    "NEXT_PUBLIC_API_BASE_URL": "https://community-aggregator.seomh81.workers.dev"
   }
 }

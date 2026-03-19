@@ -9,8 +9,8 @@ crons = ["0 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "community_db"
-database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID" # 템플릿 값입니다. Cloudflare D1의 실제 database_id로 반드시 교체하세요.
+database_name = "review-all-db-new"
+database_id = "9678970e-83f1-48f0-828b-63d79d0839e2"
 
 [vars]
 ENVIRONMENT = "development"

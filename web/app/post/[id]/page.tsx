@@ -30,17 +30,30 @@ interface PostDetail {
 
 async function getPostDetail(id: string): Promise<PostDetail | null> {
   try {
-    const res = await fetch(buildApiUrl(`/api/posts/${id}/detail`), {
+    const url = buildApiUrl(`/api/posts/${id}/detail`);
+    console.log(`[PostDetail] Fetching from: ${url}`);
+
+    const res = await fetch(url, {
       cache: "no-store",
       next: { revalidate: 0 },
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`[PostDetail] Fetch failed with status: ${res.status} ${res.statusText} for URL: ${url}`);
+      console.error(`[PostDetail] Error body: ${errorText}`);
+      return null;
+    }
 
     const data = await res.json();
-    return data.result || null;
+    if (!data.success || !data.result) {
+      console.error(`[PostDetail] API returned error or empty result:`, data.error || "No result");
+      return null;
+    }
+
+    return data.result;
   } catch (error) {
-    console.error("Failed to load post detail:", error);
+    console.error("[PostDetail] Exception during fetch:", error);
     return null;
   }
 }
