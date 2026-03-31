@@ -226,36 +226,10 @@ app.get('/api/crawl-site/:siteId', async (c) => {
     console.log(`[Crawler] Parsed ${sitePosts.length} posts from ${target.name}`);
 
     const pendingPosts = await filterPendingPosts(c.env.DB, sitePosts);
-    console.log(`[Crawler] ${pendingPosts.length} new posts to fetch detail for`);
+    console.log(`[Crawler] ${pendingPosts.length} new posts found`);
 
-    const enrichedPosts = await mapWithConcurrency(
-      pendingPosts,
-      DETAIL_FETCH_CONCURRENCY,
-      async (post) => {
-        try {
-          const detail = await fetchPostDetail(post, c.env);
-          const fallbackThumbnail = post.thumbnail || detail.media.find((item) => item.type === 'image')?.url;
-          return {
-            ...post,
-            title: detail.title || post.title,
-            author: detail.author || post.author,
-            thumbnail: fallbackThumbnail,
-            body_html: detail.bodyHtml,
-            text_content: detail.textContent,
-            media_json: JSON.stringify(detail.media),
-            comments_json: JSON.stringify(detail.comments),
-            detail_fetched_at: new Date().toISOString(),
-            created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
-          } satisfies Post;
-        } catch (detailError) {
-          console.error(`[Crawler] Failed to fetch detail for ${post.url}:`, detailError);
-          return post;
-        }
-      }
-    );
-
-    if (enrichedPosts.length > 0) {
-      await insertPostsBatch(c.env.DB, enrichedPosts);
+    if (pendingPosts.length > 0) {
+      await insertPostsBatch(c.env.DB, pendingPosts);
     }
 
     return c.json({
@@ -263,7 +237,7 @@ app.get('/api/crawl-site/:siteId', async (c) => {
       site: siteId,
       parsed: sitePosts.length,
       newPosts: pendingPosts.length,
-      inserted: enrichedPosts.length,
+      inserted: pendingPosts.length,
     });
   } catch (error: any) {
     const isDevelopment = (c.env.ENVIRONMENT || 'production') === 'development';
@@ -847,41 +821,11 @@ async function handleCrawling(env: Bindings) {
       console.log(`[Crawler] Parsed ${sitePosts.length} posts from ${target.name}`);
 
       const pendingPosts = await filterPendingPosts(env.DB, sitePosts);
-      console.log(`[Crawler] ${target.name}: ${pendingPosts.length} posts require detail fetch`);
+      console.log(`[Crawler] ${target.name}: ${pendingPosts.length} new posts found`);
 
-      if (pendingPosts.length === 0) {
-        continue;
+      if (pendingPosts.length > 0) {
+        await insertPostsBatch(env.DB, pendingPosts);
       }
-
-      const enrichedPosts = await mapWithConcurrency(
-        pendingPosts,
-        DETAIL_FETCH_CONCURRENCY,
-        async (post) => {
-          try {
-            const detail = await fetchPostDetail(post, env);
-            const fallbackThumbnail =
-              post.thumbnail ||
-              detail.media.find((item) => item.type === 'image')?.url;
-            return {
-              ...post,
-              title: detail.title || post.title,
-              author: detail.author || post.author,
-              thumbnail: fallbackThumbnail,
-              body_html: detail.bodyHtml,
-              text_content: detail.textContent,
-              media_json: JSON.stringify(detail.media),
-              comments_json: JSON.stringify(detail.comments),
-              detail_fetched_at: new Date().toISOString(),
-              created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
-            } satisfies Post;
-          } catch (detailError) {
-            console.error(`[Crawler] Failed to fetch detail for ${post.url}:`, detailError);
-            return post;
-          }
-        }
-      );
-
-      await insertPostsBatch(env.DB, enrichedPosts);
     } catch (error) {
       console.error(`[Crawler] Error processing ${target.name}:`, error);
       continue;
@@ -894,22 +838,22 @@ async function handleCrawling(env: Bindings) {
 async function filterPendingPosts(db: D1Database, posts: Post[]): Promise<Post[]> {
   if (posts.length === 0) return [];
 
-  const existing = new Map<string, { detail_fetched_at?: string | null }>();
+  const existing = new Set<string>();
 
   for (let i = 0; i < posts.length; i += DB_BATCH_SIZE) {
     const chunk = posts.slice(i, i + DB_BATCH_SIZE);
     const placeholders = chunk.map(() => '?').join(', ');
     const stmt = db.prepare(
-      `SELECT url, detail_fetched_at FROM posts WHERE url IN (${placeholders})`
+      `SELECT url FROM posts WHERE url IN (${placeholders})`
     ).bind(...chunk.map((post) => post.url));
-    const result = await stmt.all<{ url: string; detail_fetched_at?: string | null }>();
+    const result = await stmt.all<{ url: string }>();
 
     for (const row of result.results || []) {
-      existing.set(row.url, row);
+      existing.add(row.url);
     }
   }
 
-  return posts.filter((post) => !existing.get(post.url)?.detail_fetched_at);
+  return posts.filter((post) => !existing.has(post.url));
 }
 
 async function pruneStoredPosts(db: D1Database) {
