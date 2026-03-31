@@ -802,7 +802,11 @@ function parseSitePosts(siteId: string, html: string): Post[] {
 }
 
 async function handleCrawling(env: Bindings) {
-  for (const target of TARGETS) {
+  // To avoid hitting Worker timeouts, randomly pick 3 targets to process per cron execution.
+  const shuffledTargets = [...TARGETS].sort(() => 0.5 - Math.random());
+  const selectedTargets = shuffledTargets.slice(0, 3);
+
+  for (const target of selectedTargets) {
     try {
       console.log(`[Crawler] Fetching ${target.name}...`);
       const response = await fetch(target.url, {

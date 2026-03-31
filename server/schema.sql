@@ -20,3 +20,4 @@ CREATE TABLE IF NOT EXISTS posts (
 -- 인덱스 생성: 필터링 및 정렬 성능 최적화
 CREATE INDEX IF NOT EXISTS idx_posts_source_site ON posts(source_site);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
+CREATE INDEX IF NOT EXISTS idx_posts_source_date_id ON posts(source_site, created_at DESC, id DESC);

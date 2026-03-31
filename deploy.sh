@@ -11,6 +11,10 @@ npm install
 
 # 3. 배포 (환경 변수 자동 포함)
 echo "☁️ Cloudflare 배포 중..."
-CLOUDFLARE_API_TOKEN="C6gWN-P8V0EO7jfJwMOgRh4VKnzkXF8zaWRuFyqi" npm run deploy
+if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+  echo "❌ 오류: CLOUDFLARE_API_TOKEN 환경 변수가 설정되지 않았습니다."
+  exit 1
+fi
+npm run deploy
 
 echo "✅ 배포가 완료되었습니다! 브라우저에서 확인해 주세요."
