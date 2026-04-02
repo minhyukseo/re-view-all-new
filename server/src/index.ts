@@ -80,6 +80,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 const allowedOrigins = [
   'https://review-all.pages.dev',
+  'https://re-view-all-web.seomh81.workers.dev',
   'http://localhost:3000',
   'http://localhost:4173',
 ];
@@ -391,7 +392,7 @@ app.get('/api/proxy-media', async (c) => {
     return c.text('Bad Request', 400);
   }
 
-  if (!isDcinsideProxyAllowedUrl(targetUrl)) {
+  if (!isProxyAllowedUrl(targetUrl)) {
     return c.text('Forbidden', 403);
   }
 
@@ -1125,14 +1126,17 @@ function normalizeUrl(url: string | undefined, baseUrl: string): string | null {
 /** 디시 갤러리 lazy-load 플레이스홀더 — 실제 주소는 data-original 등에 있음 */
 const DCINSIDE_IMG_PLACEHOLDER = /nstatic\.dcinside\.com\/dc\/m\/img\/gallview_loading/i;
 
-function isDcinsideProxyAllowedUrl(urlString: string): boolean {
+function isProxyAllowedUrl(urlString: string): boolean {
   try {
     const u = new URL(urlString);
-    if (u.protocol !== 'https:') return false;
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
     const h = u.hostname;
     if (/^dcimg\d+\.dcinside\.(co\.kr|com)$/.test(h)) return true;
     if (h === 'image.dcinside.com') return true;
     if (h === 'nstatic.dcinside.com') return true;
+    if (h.includes("dogdrip.net")) return true;
+    if (h.includes("fmkorea.com")) return true;
+    if (h.includes("theqoo.net")) return true;
     return false;
   } catch {
     return false;

@@ -1,0 +1,86 @@
+
+> community-aggregator-web@0.1.0 build
+> next build
+
+  ▲ Next.js 14.2.35
+  - Environments: .env.local
+
+   Creating an optimized production build ...
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: Unable to snapshot resolve dependencies
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: Unable to snapshot resolve dependencies
+Failed to compile.
+
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!./app/globals.css
+Error: EPERM: operation not permitted, stat '/Users/minhyuk/Antigravity/re-view-all/package.json'
+    at Object.statSync (node:fs:1709:25)
+    at getPathType (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:45:43)
+    at isFile (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:65:10)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:420:13
+    at eachParent (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:90:21)
+    at Object.findConfigFile (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:412:12)
+    at Object.findConfig (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:457:27)
+    at browserslist.loadConfig (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:323:37)
+    at prepareQueries (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/index.js:380:31)
+    at browserslist (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/index.js:404:13)
+
+Import trace for requested module:
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!./app/globals.css
+./app/globals.css
+
+./app/globals.css
+Error: EPERM: operation not permitted, stat '/Users/minhyuk/Antigravity/re-view-all/package.json'
+    at Object.statSync (node:fs:1709:25)
+    at getPathType (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:45:43)
+    at isFile (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:65:10)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:420:13
+    at eachParent (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:90:21)
+    at Object.findConfigFile (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:412:12)
+    at Object.findConfig (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:457:27)
+    at browserslist.loadConfig (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:323:37)
+    at prepareQueries (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/index.js:380:31)
+    at browserslist (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/index.js:404:13)
+    at tryRunOrWebpackError (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:312989)
+    at __webpack_require_module__ (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:131165)
+    at __nested_webpack_require_153728__ (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:130607)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:131454
+    at symbolIterator (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/neo-async/async.js:1:14444)
+    at done (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/neo-async/async.js:1:14824)
+    at Hook.eval [as callAsync] (eval at create (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:13:28858), <anonymous>:15:1)
+    at Hook.CALL_ASYNC_DELEGATE [as _callAsync] (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:13:26012)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:130328
+    at symbolIterator (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/neo-async/async.js:1:14402)
+-- inner error --
+Error: EPERM: operation not permitted, stat '/Users/minhyuk/Antigravity/re-view-all/package.json'
+    at Object.statSync (node:fs:1709:25)
+    at getPathType (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:45:43)
+    at isFile (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:65:10)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:420:13
+    at eachParent (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:90:21)
+    at Object.findConfigFile (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:412:12)
+    at Object.findConfig (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:457:27)
+    at browserslist.loadConfig (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/node.js:323:37)
+    at prepareQueries (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/index.js:380:31)
+    at browserslist (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/browserslist/index.js:404:13)
+    at Object.<anonymous> (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!/Users/minhyuk/Antigravity/re-view-all/web/app/globals.css:1:7)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:922493
+    at Hook.eval [as call] (eval at create (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:13:28636), <anonymous>:7:1)
+    at Hook.CALL_DELEGATE [as _call] (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:13:25906)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:131198
+    at tryRunOrWebpackError (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:312943)
+    at __webpack_require_module__ (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:131165)
+    at __nested_webpack_require_153728__ (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:130607)
+    at /Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/webpack/bundle5.js:28:131454
+    at symbolIterator (/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/compiled/neo-async/async.js:1:14444)
+
+Generated code for /Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!/Users/minhyuk/Antigravity/re-view-all/web/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!/Users/minhyuk/Antigravity/re-view-all/web/app/globals.css
+
+Import trace for requested module:
+./app/globals.css
+
+
+> Build failed because of webpack errors
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.12.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+npm notice To update run: npm install -g npm@11.12.1
+npm notice
