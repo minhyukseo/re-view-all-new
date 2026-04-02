@@ -402,13 +402,16 @@ app.get('/api/proxy-media', async (c) => {
       ? agents[Math.floor(Math.random() * agents.length)]
       : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+  const urlObj = new URL(targetUrl);
+  const referer = urlObj.origin + '/';
+
   try {
     const upstream = await fetchWithTimeout(
       targetUrl,
       {
         headers: {
           'User-Agent': userAgent,
-          Referer: 'https://gall.dcinside.com/',
+          Referer: referer,
           Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
         },
       },
