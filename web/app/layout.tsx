@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Sparkles, Compass, Layers, Mail } from "lucide-react";
 import Link from "next/link";
 import "./globals.css";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export const metadata: Metadata = {
   title: "REVIEW ALL | 모던 커뮤니티 애그리게이터",
@@ -57,7 +58,9 @@ export default function RootLayout({
         </header>
         
         <main className="pt-16 min-h-screen">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
       </body>
     </html>

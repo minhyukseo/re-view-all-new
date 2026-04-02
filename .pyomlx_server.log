@@ -1,0 +1,33 @@
+/Users/minhyuk/Antigravity/re-view-all/.python_packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/runpy.py", line 188, in _run_module_as_main
+    mod_name, mod_spec, code = _get_module_details(mod_name, _Error)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/runpy.py", line 111, in _get_module_details
+    __import__(pkg_name)
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/mlx_lm/__init__.py", line 9, in <module>
+    from .convert import convert
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/mlx_lm/convert.py", line 11, in <module>
+    from .utils import (
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/mlx_lm/utils.py", line 34, in <module>
+    from huggingface_hub import snapshot_download
+  File "<frozen importlib._bootstrap>", line 1055, in _handle_fromlist
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/huggingface_hub/__init__.py", line 1044, in __getattr__
+    submod = importlib.import_module(submod_path)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/importlib/__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/huggingface_hub/_snapshot_download.py", line 5, in <module>
+    import requests
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/requests/__init__.py", line 151, in <module>
+    from . import packages, utils
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/requests/utils.py", line 64, in <module>
+    DEFAULT_CA_BUNDLE_PATH = certs.where()
+  File "/Users/minhyuk/Antigravity/re-view-all/.python_packages/certifi/core.py", line 77, in where
+    _CACERT_PATH = str(_CACERT_CTX.__enter__())
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 117, in __enter__
+    return next(self.gen)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/importlib/resources.py", line 175, in _path_from_reader
+    opener_reader = reader.open_resource(norm_resource)
+  File "<frozen importlib._bootstrap_external>", line 1055, in open_resource
+PermissionError: [Errno 1] Operation not permitted: '/Users/minhyuk/Antigravity/re-view-all/.python_packages/certifi/cacert.pem'
+Error importing huggingface_hub._snapshot_download: [Errno 1] Operation not permitted: '/Users/minhyuk/Antigravity/re-view-all/.python_packages/certifi/cacert.pem'

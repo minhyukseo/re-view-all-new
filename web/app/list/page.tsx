@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { PostCard } from "@/components/PostCard";
-import { buildApiUrl } from "@/lib/api";
+import { buildApiUrl, fetchWithRetry } from "@/lib/api";
 import { Activity, Thermometer, DollarSign, Filter, RefreshCw } from "lucide-react";
 import { FilterModal } from "@/components/FilterModal";
 
@@ -77,10 +77,24 @@ export default function ListPage() {
         params.set("sources", selectedCommunities.join(","));
       }
 
-      const res = await fetch(buildApiUrl(`/api/posts?${params.toString()}`), { cache: "no-store" });
+      const apiUrl = buildApiUrl(`/api/posts?${params.toString()}`);
+      console.log('[DEBUG] Fetching posts from:', apiUrl);
+      console.log('[DEBUG] Selected communities:', selectedCommunities);
+
+      const res = await fetchWithRetry(
+        apiUrl,
+        { 
+          cache: "no-store",
+          timeout: 10000,
+          retries: 3,
+          retryDelay: 1000,
+        }
+      );
       if (res.ok) {
         const data = (await res.json()) as any;
         const nextPosts = data.results || [];
+        console.log('[DEBUG] Received posts:', nextPosts.length);
+        console.log('[DEBUG] Sources in response:', [...new Set(nextPosts.map((p: any) => p.source_site))]);
 
         setPosts(prev => mode === "replace" ? nextPosts : [...prev, ...nextPosts]);
         setHasMore(Boolean(data.hasMore));

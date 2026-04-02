@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, MessageSquare, Image as ImageIcon, Video } from "lucide-react";
 import { buildApiUrl } from "@/lib/api";
+import { isDcinsideLazyPlaceholderUrl, proxiedDcinsideImageUrl } from "@/lib/media";
 
 interface MediaItem {
   type: "image" | "video";
@@ -34,8 +35,7 @@ async function getPostDetail(id: string): Promise<PostDetail | null> {
     console.log(`[PostDetail] Fetching from: ${url}`);
 
     const res = await fetch(url, {
-      cache: "no-store",
-      next: { revalidate: 0 },
+      next: { revalidate: 60 },
     });
 
     if (!res.ok) {
@@ -80,6 +80,10 @@ export default async function PostDetailPage({ params }: { params: { id: string 
     .map((block) => block.trim())
     .filter(Boolean);
 
+  const displayMedia = detail.media.filter(
+    (item) => !(item.type === "image" && isDcinsideLazyPlaceholderUrl(item.url))
+  );
+
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -113,17 +117,21 @@ export default async function PostDetailPage({ params }: { params: { id: string 
 
         <h1 className="mt-4 text-3xl font-bold text-white leading-tight">{detail.title}</h1>
 
-        {detail.media.length > 0 ? (
+        {displayMedia.length > 0 ? (
           <div className="mt-8 space-y-4">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-300">
               <ImageIcon size={16} />
-              <span>미디어 {detail.media.length}개</span>
+              <span>미디어 {displayMedia.length}개</span>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              {detail.media.map((item, index) => (
+              {displayMedia.map((item, index) => (
                 <div key={`${item.type}-${item.url}-${index}`} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
                   {item.type === "image" ? (
-                    <img src={item.url} alt="" className="h-full w-full object-cover" />
+                    <img
+                      src={proxiedDcinsideImageUrl(item.url)}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
                   ) : (
                     <div className="aspect-video">
                       {item.url.includes("youtube.com") || item.url.includes("youtu.be") || item.url.includes("player") ? (

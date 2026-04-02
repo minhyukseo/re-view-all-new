@@ -1,6 +1,11 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { load } from 'cheerio';
+import type cheerio from 'cheerio';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import { parseSitePosts } from './parsers';
+
+type CheerioElement = cheerio.Element;
 
 // Cloudflare Workers D1 Types (if @cloudflare/workers-types is not available as import)
 interface D1PreparedStatement {
@@ -26,9 +31,10 @@ type Bindings = {
   DB: D1Database;
   USER_AGENTS: string[];
   ENVIRONMENT?: string;
+  RATE_LIMIT_KV?: KVNamespace;
 };
 
-interface Post {
+export interface Post {
   id?: number;
   source_site: string;
   title: string;
@@ -72,18 +78,246 @@ interface PostDetail {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.use('*', cors());
+const allowedOrigins = [
+  'https://review-all.pages.dev',
+  'http://localhost:3000',
+  'http://localhost:4173',
+];
+
+app.use('*', cors({
+  origin: (origin) => {
+    if (!origin) return '*';
+    return allowedOrigins.includes(origin) ? origin : '';
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  exposeHeaders: ['Content-Length', 'X-Kuma-Revision'],
+  maxAge: 600,
+  credentials: true,
+}));
+
+app.use('*', async (c, next) => {
+  const kv = c.env.RATE_LIMIT_KV;
+  if (!kv) {
+    await next();
+    return;
+  }
+
+  const clientIP = c.req.header('CF-Connecting-IP') || 'unknown';
+  const rateLimitKey = `rate_limit:${clientIP}`;
+  const windowMs = 60 * 1000;
+  const maxRequests = 100;
+
+  const now = Date.now();
+  const windowStart = Math.floor(now / windowMs) * windowMs;
+  const windowKey = `${rateLimitKey}:${windowStart}`;
+
+  try {
+    const current = await kv.get(windowKey);
+    const requestCount = current ? parseInt(current, 10) : 0;
+
+    if (requestCount >= maxRequests) {
+      return c.json(
+        { success: false, error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
+    await kv.put(windowKey, String(requestCount + 1), {
+      expirationTtl: Math.ceil(windowMs / 1000),
+    });
+
+    c.header('X-RateLimit-Limit', String(maxRequests));
+    c.header('X-RateLimit-Remaining', String(maxRequests - requestCount - 1));
+    c.header('X-RateLimit-Reset', String(Math.ceil((windowStart + windowMs) / 1000)));
+  } catch (error) {
+    console.error('Rate limit error:', error);
+  }
+
+  await next();
+});
+
+app.onError((err, c) => {
+  const timestamp = new Date().toISOString();
+  const clientIP = c.req.header('CF-Connecting-IP') || 'unknown';
+  const method = c.req.method;
+  const url = c.req.url;
+  const userAgent = c.req.header('User-Agent') || 'unknown';
+
+  console.error(JSON.stringify({
+    timestamp,
+    level: 'error',
+    message: err.message,
+    stack: err.stack,
+    clientIP,
+    method,
+    url,
+    userAgent,
+    error: {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    },
+  }));
+
+  return c.json(
+    { success: false, error: 'Internal server error' },
+    { status: 500 }
+  );
+});
+
+app.notFound((c) => {
+  const timestamp = new Date().toISOString();
+  const clientIP = c.req.header('CF-Connecting-IP') || 'unknown';
+  const method = c.req.method;
+  const url = c.req.url;
+
+  console.warn(JSON.stringify({
+    timestamp,
+    level: 'warn',
+    message: 'Not Found',
+    clientIP,
+    method,
+    url,
+  }));
+
+  return c.json(
+    { success: false, error: 'Not found' },
+    { status: 404 }
+  );
+});
+
+app.use('*', async (c, next) => {
+  const start = Date.now();
+  const clientIP = c.req.header('CF-Connecting-IP') || 'unknown';
+  const method = c.req.method;
+  const url = c.req.url;
+  const userAgent = c.req.header('User-Agent') || 'unknown';
+
+  await next();
+
+  const duration = Date.now() - start;
+  const status = c.res.status;
+
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: 'info',
+    message: 'Request',
+    clientIP,
+    method,
+    url,
+    userAgent,
+    status,
+    duration,
+  }));
+});
 
 const DEFAULT_POST_LIMIT = 20;
 const MAX_POST_LIMIT = 100;
 const MIN_POST_LIMIT = 1;
 const MIN_POST_OFFSET = 0;
 const DETAIL_FETCH_CONCURRENCY = 4;
-const DB_BATCH_SIZE = 50;
+const DB_BATCH_SIZE = 30; // 50에서 30으로 축소
 const DB_BATCH_RETRY_COUNT = 2;
+const DB_RETRY_DELAY = 500; // 재시도 시 지연 시간 (ms)
 const POST_RETENTION_DAYS = 7;
 const MAX_POSTS_PER_SITE = 300;
 const POST_FEED_FETCH_CAP_PER_SITE = 200;
+
+// 구조화된 로깅 유틸리티
+const logger = {
+  info: (message: string, data?: Record<string, any>) => {
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message,
+      ...data,
+    }));
+  },
+  warn: (message: string, data?: Record<string, any>) => {
+    console.warn(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'warn',
+      message,
+      ...data,
+    }));
+  },
+  error: (message: string, error?: any, data?: Record<string, any>) => {
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      message,
+      error: error instanceof Error ? {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      } : error,
+      ...data,
+    }));
+  },
+};
+
+// 메트릭 수집
+const metrics = {
+  crawlAttempts: 0,
+  crawlSuccesses: 0,
+  crawlFailures: 0,
+  postsCrawled: 0,
+  postsInserted: 0,
+  postsUpdated: 0,
+  errors: new Map<string, number>(),
+  
+  incrementAttempt() {
+    this.crawlAttempts++;
+  },
+  
+  incrementSuccess() {
+    this.crawlSuccesses++;
+  },
+  
+  incrementFailure() {
+    this.crawlFailures++;
+  },
+  
+  addPostsCrawled(count: number) {
+    this.postsCrawled += count;
+  },
+  
+  addPostsInserted(count: number) {
+    this.postsInserted += count;
+  },
+  
+  addPostsUpdated(count: number) {
+    this.postsUpdated += count;
+  },
+  
+  addError(errorType: string) {
+    const current = this.errors.get(errorType) || 0;
+    this.errors.set(errorType, current + 1);
+  },
+  
+  getStats() {
+    return {
+      crawlAttempts: this.crawlAttempts,
+      crawlSuccesses: this.crawlSuccesses,
+      crawlFailures: this.crawlFailures,
+      postsCrawled: this.postsCrawled,
+      postsInserted: this.postsInserted,
+      postsUpdated: this.postsUpdated,
+      errorCounts: Object.fromEntries(this.errors),
+    };
+  },
+  
+  reset() {
+    this.crawlAttempts = 0;
+    this.crawlSuccesses = 0;
+    this.crawlFailures = 0;
+    this.postsCrawled = 0;
+    this.postsInserted = 0;
+    this.postsUpdated = 0;
+    this.errors.clear();
+  },
+};
 
 const TARGETS = [
   { id: "dogdrip", name: "개드립", url: "https://www.dogdrip.net/?mid=dogdrip&sort_index=popular" },
@@ -140,6 +374,66 @@ app.get('/api/posts', async (c) => {
   });
 });
 
+/**
+ * 브라우저에서 디시 CDN 이미지는 gall.dcinside.com Referer가 없으면 403이 난다.
+ * Worker가 동일 Referer로 가져와서 제공한다.
+ */
+app.get('/api/proxy-media', async (c) => {
+  const rawUrl = c.req.query('url');
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return c.text('Bad Request', 400);
+  }
+
+  let targetUrl: string;
+  try {
+    targetUrl = decodeURIComponent(rawUrl);
+  } catch {
+    return c.text('Bad Request', 400);
+  }
+
+  if (!isDcinsideProxyAllowedUrl(targetUrl)) {
+    return c.text('Forbidden', 403);
+  }
+
+  const agents = c.env.USER_AGENTS;
+  const userAgent =
+    Array.isArray(agents) && agents.length > 0
+      ? agents[Math.floor(Math.random() * agents.length)]
+      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+  try {
+    const upstream = await fetchWithTimeout(
+      targetUrl,
+      {
+        headers: {
+          'User-Agent': userAgent,
+          Referer: 'https://gall.dcinside.com/',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+      },
+      20000
+    );
+
+    if (!upstream.ok) {
+      return c.text('Bad Gateway', 502);
+    }
+
+    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    const cacheControl = upstream.headers.get('cache-control') || 'public, max-age=86400';
+
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': cacheControl,
+      },
+    });
+  } catch (error) {
+    logger.error('proxy-media fetch failed', error, { targetUrl });
+    return c.text('Bad Gateway', 502);
+  }
+});
+
 app.get('/api/posts/:id/detail', async (c) => {
   const postId = parseInt(c.req.param('id'), 10);
   if (Number.isNaN(postId)) {
@@ -156,7 +450,13 @@ app.get('/api/posts/:id/detail', async (c) => {
 
   // Since text_content or body_html are already there, return directly
   if (post.text_content || post.body_html) {
-    const media = parseStoredJson<MediaItem[]>(post.media_json, []);
+    let media = parseStoredJson<MediaItem[]>(post.media_json, []);
+    if (post.source_site === 'dcinside' && post.body_html) {
+      const reparsed = extractMediaFromDcinsideBodyHtml(post.body_html, post.url);
+      if (reparsed.length > 0) {
+        media = reparsed;
+      }
+    }
     const comments = parseStoredJson<CommentItem[]>(post.comments_json, []);
     return c.json({
       success: true,
@@ -169,8 +469,8 @@ app.get('/api/posts/:id/detail', async (c) => {
         createdAt: post.created_at || '',
         bodyHtml: post.body_html || '',
         textContent: post.text_content || '',
-        media: parseStoredJson<MediaItem[]>(post.media_json, []),
-        comments: parseStoredJson<CommentItem[]>(post.comments_json, []),
+        media,
+        comments,
       },
     });
   }
@@ -354,6 +654,22 @@ app.get('/api/backfill-missing-details', async (c) => {
   }
 });
 
+// Additional diagnostic endpoint: per-site post counts
+app.get('/api/site-stats', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT source_site, COUNT(*) as cnt FROM posts GROUP BY source_site ORDER BY source_site`
+    ).all<{ source_site: string; cnt: number }>();
+    const stats: Record<string, number> = {};
+    for (const row of results || []) {
+      stats[row.source_site] = row.cnt ?? 0;
+    }
+    return c.json({ success: true, stats });
+  } catch (err: any) {
+    return c.json({ success: false, error: err?.message ?? 'unknown' }, 500);
+  }
+});
+
 function parseBoundedInteger(
   rawValue: string | undefined,
   options: { defaultValue: number; min: number; max: number; fieldName: string }
@@ -520,336 +836,57 @@ async function insertPostsBatch(db: D1Database, posts: Post[]) {
   }
 }
 
-function parseSitePosts(siteId: string, html: string): Post[] {
-  const posts: Post[] = [];
-  const seenUrls = new Set<string>();
-  try {
-    const $ = load(html);
-
-    if (siteId === 'dogdrip') {
-      $('a.title-link[data-document-srl]').each((_, linkElement) => {
-        const link = $(linkElement);
-        const $row = link.closest('tr');
-        const title = link.text().trim();
-        const rawUrl = link.attr('href');
-        const url = normalizeUrl(rawUrl, 'https://www.dogdrip.net');
-        const author =
-          $row.find('td.author a').first().text().trim() ||
-          $row.find('.author .nickname').first().text().trim() ||
-          $row.find('td.author').first().text().trim() ||
-          '익명';
-
-        if (!title || !url || url.includes('notice') || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({ source_site: siteId, title, url, author });
-      });
-    } else if (siteId === 'dcinside') {
-      $('.ub-content').each((_, row) => {
-        const $row = $(row);
-        const numberText = $row.find('.gall_num').first().text().trim();
-        const link = $row.find('.gall_tit a[view-msg]').first();
-        const title = link.text().trim();
-        const url = normalizeUrl(link.attr('href'), 'https://gall.dcinside.com');
-        const author =
-          $row.find('.gall_writer').attr('data-nick') ||
-          $row.find('.gall_writer .nickname em').first().text().trim() ||
-          $row.find('.gall_writer').text().trim() ||
-          '익명';
-        const createdAt =
-          normalizeCreatedAt($row.find('.gall_date').attr('title')) ||
-          normalizeCreatedAt($row.find('.gall_date').text().trim()) ||
-          '';
-        const thumbnail = normalizeUrl(
-          $row.find('.gall_tit img').first().attr('src') ||
-          $row.find('.gall_tit img').first().attr('data-src'),
-          'https://gall.dcinside.com'
-        );
-
-        if (
-          numberText === '공지' ||
-          !title ||
-          !url ||
-          url.startsWith('javascript:') ||
-          seenUrls.has(url)
-        ) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author,
-          created_at: createdAt,
-          thumbnail: thumbnail || undefined,
-        });
-      });
-    } else if (siteId === 'todayhumor') {
-      $('table.table_list tr.view').each((_, row) => {
-        const $row = $(row);
-        const titleLink = $row.find('td.subject a[href*="/board/view.php"]').first();
-        const title = titleLink.clone().find('.list_memo_count_span').remove().end().text().trim();
-        const url = normalizeUrl(titleLink.attr('href'), 'https://www.todayhumor.co.kr/board/');
-        const author = $row.find('td.name').first().text().trim() || '익명';
-        const createdAt = normalizeCreatedAt(normalizeTodayhumorDate($row.find('td.date').first().text().trim()));
-
-        if (!title || !url || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author,
-          created_at: createdAt,
-        });
-      });
-    } else if (siteId === 'theqoo') {
-      $('table.theqoo_board_table tbody tr').each((_, row) => {
-        const $row = $(row);
-        if ($row.hasClass('notice') || $row.hasClass('notice_expand')) {
-          return;
-        }
-
-        const titleLink = $row.find('td.title > a').first();
-        const title = titleLink.text().trim();
-        const url = normalizeUrl(titleLink.attr('href'), 'https://theqoo.net');
-
-        if (!title || !url || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author: '무명의 더쿠',
-        });
-      });
-    } else if (siteId === 'aagag') {
-      $('a.article.c.t[href*="/issue/?idx="]').each((_, linkElement) => {
-        const link = $(linkElement);
-        const title = link.find('span.title').clone().find('.btmlayer').remove().end().text().trim();
-        const url = normalizeUrl(link.attr('href'), 'https://aagag.com');
-        const thumbStyle = link.find('.thumb').attr('style') || '';
-        const thumbnailMatch = thumbStyle.match(/url\(([^)]+)\)/i);
-        const thumbnail = normalizeUrl(thumbnailMatch?.[1]?.replace(/^['"]|['"]$/g, ''), 'https://aagag.com');
-
-        if (!title || !url || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author: '익명',
-          thumbnail: thumbnail || undefined,
-        });
-      });
-    } else if (siteId === 'ruliweb') {
-      $('#best_body .board_list_table tbody tr.table_body').each((_, row) => {
-        const $row = $(row);
-        const link = $row.find('td.subject a.subject_link').first();
-        const title =
-          link.find('.subject_inner_text').first().text().trim() ||
-          link.find('.text_over').first().text().trim() ||
-          link.text().trim();
-        const url = normalizeUrl(link.attr('href'), 'https://bbs.ruliweb.com');
-        const author = $row.find('td.writer').first().text().trim() || '익명';
-        const isHumorBest = url?.includes('/best/board/300143/read/') || false;
-
-        if (!title || !url || !isHumorBest || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author,
-          thumbnail: normalizeUrl($row.find('img').first().attr('src'), 'https://bbs.ruliweb.com') || undefined,
-        });
-      });
-    } else if (siteId === 'nate') {
-      $('.cntList ul.post_wrap > li').each((_, item) => {
-        const $item = $(item);
-        const link = $item.find('dt h2 a').first();
-        const title = link.attr('title')?.trim() || link.text().trim();
-        const url = normalizeUrl(link.attr('href'), 'https://pann.nate.com');
-        const thumbnail = normalizeUrl($item.find('.thumb img').attr('src'), 'https://pann.nate.com');
-
-        if (!title || !url || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author: '익명',
-          thumbnail: thumbnail || undefined,
-        });
-      });
-    } else if (siteId === 'bobaedream') {
-      $('ul.rank > li').each((_, item) => {
-        const $item = $(item);
-        const link = $item.find('.info > a').first();
-        const title = $item.find('.txt .cont').first().text().trim();
-        const url = normalizeUrl(link.attr('href'), 'https://m.bobaedream.co.kr');
-        const metaBlocks = $item.find('.txt2 .block');
-        const author = metaBlocks.length >= 3
-          ? $(metaBlocks[1]).text().trim()
-          : (metaBlocks.length >= 2 ? $(metaBlocks[0]).text().trim() : '익명');
-
-        if (!title || !url || url.includes('/view?code=') || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author: author || '익명',
-        });
-      });
-    } else if (siteId === 'ppomppu') {
-      $('a[href*="view.php?id=humor&no="], a[href*="/zboard/view.php?id=humor&no="]').each((_, element) => {
-        const link = $(element);
-        const title = link.text().replace(/\s+/g, ' ').trim();
-        const url = normalizeUrl(link.attr('href'), 'https://www.ppomppu.co.kr/zboard/');
-        const $row = link.closest('tr');
-        const author =
-          $row.find('td[class*="name"]').first().text().trim() ||
-          $row.find('a[href*="member_info"]').first().text().trim() ||
-          '익명';
-        const createdAt =
-          normalizeCreatedAt($row.find('td[class*="date"]').attr('title')) ||
-          normalizeCreatedAt($row.find('td[class*="date"]').first().text().trim()) ||
-          '';
-        const thumbnail = normalizeUrl(
-          $row.find('img').first().attr('src') || $row.find('img').first().attr('data-src'),
-          'https://www.ppomppu.co.kr'
-        );
-
-        if (
-          !title ||
-          !url ||
-          title === '공지' ||
-          url.includes('javascript:') ||
-          seenUrls.has(url)
-        ) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author,
-          created_at: normalizeCreatedAt(createdAt),
-          thumbnail: thumbnail || undefined,
-        });
-      });
-    } else if (siteId === 'mlbpark') {
-      $('.gather_list > li.items').each((_, element) => {
-        const item = $(element);
-        const link = item.find('.title a').first();
-        const title = link.text().replace(/\s+/g, ' ').trim();
-        const url = normalizeUrl(link.attr('href'), 'https://mlbpark.donga.com');
-        const author = item.find('.info .user_name').first().text().trim() || '익명';
-        const createdAt = normalizeCreatedAt(item.find('.info .date').first().text().trim()) || '';
-        const thumbnail = normalizeUrl(item.find('.photo img').attr('src'), 'https://mlbpark.donga.com');
-
-        if (!title || !url || seenUrls.has(url)) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author,
-          created_at: normalizeCreatedAt(createdAt),
-          thumbnail: thumbnail || undefined,
-        });
-      });
-    } else if (siteId === 'etoland') {
-      $('#mw_basic li.list').each((_, item) => {
-        const $item = $(item);
-        const link = $item.find('.subject a.subject_a').first();
-        const title = link.text().replace(/\s+/g, ' ').trim();
-        const url = normalizeUrl(link.attr('href'), 'https://www.etoland.co.kr');
-        const authorNode = $item.find('.writer .member').first();
-        const dateNode = $item.find('.datetime').first();
-        const author = authorNode.text().trim() || '익명';
-        const createdAt = normalizeCreatedAt(dateNode.text().replace(/\s+/g, ' ').trim());
-
-        if (
-          !title ||
-          !url ||
-          !url.includes('bo_table=etohumor07') ||
-          !url.includes('wr_id=') ||
-          url.includes('tb_tap=') ||
-          !authorNode.length ||
-          !dateNode.length ||
-          seenUrls.has(url)
-        ) {
-          return;
-        }
-
-        seenUrls.add(url);
-        posts.push({
-          source_site: siteId,
-          title,
-          url,
-          author,
-          created_at: createdAt,
-        });
-      });
-    }
-  } catch (error) {
-     console.error(`Parsing Error for ${siteId}:`, error);
-  }
-  return posts;
-}
 
 async function handleCrawling(env: Bindings) {
+  logger.info('Starting crawl cycle', { sitesCount: TARGETS.length });
+  metrics.reset();
+
   for (const target of TARGETS) {
+    metrics.incrementAttempt();
+    
     try {
-      console.log(`[Crawler] Fetching ${target.name}...`);
-      const response = await fetch(target.url, {
-        headers: buildHeaders(env, target.url),
-      });
+      logger.info(`Fetching ${target.name}`, { siteId: target.id, url: target.url });
+      
+      const response = await fetchWithTimeout(
+        target.url,
+        {
+          headers: buildHeaders(env, target.url),
+        },
+        15000 // 15초 타임아웃
+      );
 
       if (!response.ok) {
-        console.error(`[Crawler] Failed to fetch ${target.name}: ${response.status}`);
+        metrics.incrementFailure();
+        metrics.addError(`fetch_failed_${response.status}`);
+        logger.error(`Failed to fetch ${target.name}`, { 
+          siteId: target.id, 
+          status: response.status,
+          statusText: response.statusText 
+        });
         continue;
       }
 
       const html = target.id === 'etoland'
         ? new TextDecoder('euc-kr').decode(await response.arrayBuffer())
         : await response.text();
+      
       const sitePosts = parseSitePosts(target.id, html);
-      console.log(`[Crawler] Parsed ${sitePosts.length} posts from ${target.name}`);
+      metrics.addPostsCrawled(sitePosts.length);
+      
+      logger.info(`Parsed posts from ${target.name}`, { 
+        siteId: target.id, 
+        postsCount: sitePosts.length 
+      });
 
       const pendingPosts = await filterPendingPosts(env.DB, sitePosts);
-      console.log(`[Crawler] ${target.name}: ${pendingPosts.length} posts require detail fetch`);
+      
+      logger.info(`${target.name}: posts require detail fetch`, { 
+        siteId: target.id, 
+        pendingCount: pendingPosts.length 
+      });
 
       if (pendingPosts.length === 0) {
+        metrics.incrementSuccess();
         continue;
       }
 
@@ -875,20 +912,29 @@ async function handleCrawling(env: Bindings) {
               created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
             } satisfies Post;
           } catch (detailError) {
-            console.error(`[Crawler] Failed to fetch detail for ${post.url}:`, detailError);
+            metrics.addError('detail_fetch_failed');
+            logger.error(`Failed to fetch detail for ${post.url}`, detailError, { 
+              siteId: target.id 
+            });
             return post;
           }
         }
       );
 
       await insertPostsBatch(env.DB, enrichedPosts);
+      metrics.incrementSuccess();
+      
     } catch (error) {
-      console.error(`[Crawler] Error processing ${target.name}:`, error);
+      metrics.incrementFailure();
+      metrics.addError('unknown_error');
+      logger.error(`Error processing ${target.name}`, error, { siteId: target.id });
       continue;
     }
   }
 
   await pruneStoredPosts(env.DB);
+  
+  logger.info('Crawl cycle completed', { stats: metrics.getStats() });
 }
 
 async function filterPendingPosts(db: D1Database, posts: Post[]): Promise<Post[]> {
@@ -985,28 +1031,53 @@ function buildHeaders(env: Bindings, referer?: string): HeadersInit {
   const userAgent = env.USER_AGENTS[Math.floor(Math.random() * env.USER_AGENTS.length)];
   const headers: HeadersInit = {
     'User-Agent': userAgent,
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': referer || 'https://www.google.com/',
     'Cache-Control': 'no-cache',
     'Pragma': 'no-cache',
     'Upgrade-Insecure-Requests': '1',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': referer ? 'same-origin' : 'none',
+    'Sec-Fetch-User': '?1',
+    'Sec-Ch-Ua': '"Chromium";v="122", "Google Chrome";v="122", "Not-A.Brand";v="99"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
   };
-
-  if ((referer || '').includes('ppomppu.co.kr')) {
-    headers['Sec-Fetch-Dest'] = 'document';
-    headers['Sec-Fetch-Mode'] = 'navigate';
-    headers['Sec-Fetch-Site'] = 'same-origin';
-    headers['Sec-Fetch-User'] = '?1';
-  }
 
   return headers;
 }
 
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = 10000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function fetchText(url: string, env: Bindings, referer?: string): Promise<{ html: string; headers: Headers }> {
-  const response = await fetch(url, {
-    headers: buildHeaders(env, referer),
-  });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: buildHeaders(env, referer),
+    },
+    10000
+  );
 
   if (!response.ok) {
     throw new Error(`Failed to fetch source: ${response.status}`);
@@ -1048,6 +1119,23 @@ function normalizeUrl(url: string | undefined, baseUrl: string): string | null {
     return new URL(url, baseUrl).toString();
   } catch {
     return null;
+  }
+}
+
+/** 디시 갤러리 lazy-load 플레이스홀더 — 실제 주소는 data-original 등에 있음 */
+const DCINSIDE_IMG_PLACEHOLDER = /nstatic\.dcinside\.com\/dc\/m\/img\/gallview_loading/i;
+
+function isDcinsideProxyAllowedUrl(urlString: string): boolean {
+  try {
+    const u = new URL(urlString);
+    if (u.protocol !== 'https:') return false;
+    const h = u.hostname;
+    if (/^dcimg\d+\.dcinside\.(co\.kr|com)$/.test(h)) return true;
+    if (h === 'image.dcinside.com') return true;
+    if (h === 'nstatic.dcinside.com') return true;
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -1182,10 +1270,21 @@ function extractMedia($root: Cheerio<Element>, baseUrl: string): MediaItem[] {
 
   for (let index = 0; index < imageNodes.length; index += 1) {
     const node = imageNodes.eq(index);
-    const src = normalizeUrl(
-      node.attr('data-original') || node.attr('src') || node.attr('data-src'),
-      baseUrl
-    );
+    const rawCandidates = [
+      node.attr('data-original'),
+      node.attr('data-src'),
+      node.attr('src'),
+    ].filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+
+    let src: string | null = null;
+    for (const raw of rawCandidates) {
+      const normalized = normalizeUrl(raw, baseUrl);
+      if (!normalized) continue;
+      if (DCINSIDE_IMG_PLACEHOLDER.test(normalized)) continue;
+      src = normalized;
+      break;
+    }
+
     if (!src || seen.has(src)) continue;
     seen.add(src);
     items.push({ type: 'image', url: src });
@@ -1208,6 +1307,11 @@ function extractMedia($root: Cheerio<Element>, baseUrl: string): MediaItem[] {
   }
 
   return items;
+}
+
+function extractMediaFromDcinsideBodyHtml(fragment: string, baseUrl: string): MediaItem[] {
+  const $ = load(`<div id="dc-write-root">${fragment}</div>`);
+  return extractMedia($('#dc-write-root'), baseUrl);
 }
 
 function extractTextWithBreaks(html: string): string {
@@ -1284,7 +1388,7 @@ async function fetchGenericDetail(post: Post, env: Bindings): Promise<PostDetail
 function parseDogdripComments($: CheerioAPI): CommentItem[] {
   const comments: CommentItem[] = [];
 
-  $('.comment-item').each((_, element) => {
+  $('.comment-item').each((_: number, element: CheerioElement) => {
     const item = $(element);
     const id = item.attr('id')?.replace(/^comment_/, '') || '';
     const author =
