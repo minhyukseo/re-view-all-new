@@ -10,10 +10,6 @@ export function getApiBaseUrl() {
     return configuredBaseUrl;
   }
 
-  if (typeof window !== "undefined") {
-    return "";
-  }
-
   return FALLBACK_API_BASE_URL;
 }
 

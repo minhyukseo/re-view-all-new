@@ -4,8 +4,8 @@ compatibility_date = "2024-03-17"
 compatibility_flags = [ "nodejs_compat" ]
 
 [triggers]
-# 매 정각마다 크롤링 수행
-crons = ["0 * * * *"]
+# 5분마다 부분적으로 크롤링 수행
+crons = ["*/5 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
