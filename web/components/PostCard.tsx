@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight, Layers } from "lucide-react";
 import { formatRelativeTime } from "@/lib/time";
+import { decodeHtmlEntities } from "@/lib/decode";
 
 interface Post {
   id: number;
@@ -58,14 +59,14 @@ export function PostCard({ post }: { post: Post }) {
             </span>
             {timeInfo ? <span className="text-zinc-500 text-xs font-medium">{timeInfo}</span> : null}
             {timeInfo ? <span className="text-zinc-600 text-xs hidden sm:inline">•</span> : null}
-            <span className="text-zinc-400 text-xs truncate max-w-[120px] hidden sm:inline">{post.author || "익명"}</span>
+            <span className="text-zinc-400 text-xs truncate max-w-[120px] hidden sm:inline">{decodeHtmlEntities(post.author || "익명")}</span>
             <span className="ml-auto flex items-center gap-1.5 px-2 py-0.5 bg-green-500/10 border border-green-500/20 text-green-400 rounded text-[10px] font-bold">
                NEW
             </span>
           </div>
           
           <h3 className="text-base font-semibold text-zinc-200 group-hover:text-white transition-colors leading-relaxed truncate">
-            {post.title}
+            {decodeHtmlEntities(post.title)}
           </h3>
           
           <div className="mt-3 flex items-center gap-4 text-xs font-medium text-zinc-500">

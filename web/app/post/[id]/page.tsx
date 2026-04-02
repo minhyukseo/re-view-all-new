@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, MessageSquare, Image as ImageIcon, Video } from "lucide-react";
 import { buildApiUrl } from "@/lib/api";
-import { isDcinsideLazyPlaceholderUrl, proxiedDcinsideImageUrl } from "@/lib/media";
+import { isDcinsideLazyPlaceholderUrl, getProxiedImageUrl } from "@/lib/media";
+import { decodeHtmlEntities } from "@/lib/decode";
 
 interface MediaItem {
   type: "image" | "video";
@@ -75,14 +76,17 @@ export default async function PostDetailPage({ params }: { params: { id: string 
     );
   }
 
-  const textBlocks = detail.textContent
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-
   const displayMedia = detail.media.filter(
     (item) => !(item.type === "image" && isDcinsideLazyPlaceholderUrl(item.url))
   );
+
+  const decodedTitle = decodeHtmlEntities(detail.title);
+  const decodedBody = decodeHtmlEntities(detail.textContent);
+  
+  const textBlocks = decodedBody
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
@@ -106,7 +110,7 @@ export default async function PostDetailPage({ params }: { params: { id: string 
         <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-400">
           <span>{detail.sourceSite}</span>
           <span>•</span>
-          <span>{detail.author || "익명"}</span>
+          <span>{decodeHtmlEntities(detail.author || "익명")}</span>
           {detail.createdAt ? (
             <>
               <span>•</span>
@@ -115,7 +119,7 @@ export default async function PostDetailPage({ params }: { params: { id: string 
           ) : null}
         </div>
 
-        <h1 className="mt-4 text-3xl font-bold text-white leading-tight">{detail.title}</h1>
+        <h1 className="mt-4 text-3xl font-bold text-white leading-tight">{decodedTitle}</h1>
 
         {displayMedia.length > 0 ? (
           <div className="mt-8 space-y-4">
@@ -128,9 +132,10 @@ export default async function PostDetailPage({ params }: { params: { id: string 
                 <div key={`${item.type}-${item.url}-${index}`} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
                   {item.type === "image" ? (
                     <img
-                      src={proxiedDcinsideImageUrl(item.url)}
+                      src={getProxiedImageUrl(item.url)}
                       alt=""
                       className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
                     />
                   ) : (
                     <div className="aspect-video">
@@ -153,7 +158,7 @@ export default async function PostDetailPage({ params }: { params: { id: string 
             <span>본문</span>
           </div>
           <div className="space-y-4 text-[15px] leading-7 text-zinc-200">
-            {(textBlocks.length ? textBlocks : [detail.textContent]).filter(Boolean).map((block, index) => (
+            {(textBlocks.length ? textBlocks : [decodedBody]).filter(Boolean).map((block, index) => (
               <p key={`${index}-${block.slice(0, 24)}`} className="whitespace-pre-wrap break-words">
                 {block}
               </p>
@@ -177,11 +182,11 @@ export default async function PostDetailPage({ params }: { params: { id: string 
                 style={{ marginLeft: `${Math.min(comment.depth, 3) * 20}px` }}
               >
                 <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-400">
-                  <span className="font-medium text-zinc-200">{comment.author || "익명"}</span>
+                  <span className="font-medium text-zinc-200">{decodeHtmlEntities(comment.author || "익명")}</span>
                   {comment.createdAt ? <span>{comment.createdAt}</span> : null}
                 </div>
                 <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-300">
-                  {comment.body}
+                  {decodeHtmlEntities(comment.body)}
                 </p>
               </article>
             ))}
