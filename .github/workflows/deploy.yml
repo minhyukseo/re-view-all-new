@@ -24,8 +24,20 @@ jobs:
         working-directory: web
         run: npm install
 
-      - name: Deploy to Cloudflare
+      - name: Deploy Frontend (Web)
         working-directory: web
         run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy API (Server)
+        working-directory: server
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy Edge Worker
+        working-directory: edge-worker
+        run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

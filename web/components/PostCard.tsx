@@ -10,6 +10,7 @@ interface Post {
   url: string;
   author: string;
   created_at: string;
+  crawled_at?: string;
 }
 
 const SITE_COLORS: Record<string, string> = {
@@ -42,7 +43,7 @@ export function PostCard({ post }: { post: Post }) {
   const colorClass = SITE_COLORS[post.source_site] || "text-zinc-400 bg-zinc-400/10 border-zinc-400/20";
   const label = SITE_LABELS[post.source_site] || post.source_site;
 
-  const timeInfo = formatRelativeTime(post.created_at);
+  const timeInfo = formatRelativeTime(post.crawled_at || post.created_at);
 
   return (
     <Link 

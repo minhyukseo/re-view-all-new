@@ -13,6 +13,7 @@ interface Post {
   url: string;
   author: string;
   created_at: string;
+  crawled_at?: string;
 }
 
 const PAGE_SIZE = 24;

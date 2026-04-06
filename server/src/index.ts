@@ -403,7 +403,15 @@ app.get('/api/proxy-media', async (c) => {
       : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
   const urlObj = new URL(targetUrl);
-  const referer = urlObj.origin + '/';
+  let referer = urlObj.origin + '/';
+  
+  if (urlObj.hostname.includes('dcinside')) {
+    referer = 'https://gall.dcinside.com/';
+  } else if (urlObj.hostname.includes('etoland')) {
+    referer = 'https://www.etoland.co.kr/';
+  } else if (urlObj.hostname.includes('dogdrip')) {
+    referer = 'https://www.dogdrip.net/';
+  }
 
   try {
     const upstream = await fetchWithTimeout(
@@ -915,11 +923,20 @@ async function handleCrawling(env: Bindings) {
               detail_fetched_at: new Date().toISOString(),
               created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
             } satisfies Post;
-          } catch (detailError) {
+          } catch (detailError: any) {
             metrics.addError('detail_fetch_failed');
             logger.error(`Failed to fetch detail for ${post.url}`, detailError, { 
               siteId: target.id 
             });
+
+            try {
+              await env.DB.prepare(
+                'INSERT INTO crawl_logs (source_site, url, message) VALUES (?, ?, ?)'
+              ).bind(target.id, post.url, detailError.message).run();
+            } catch (logError) {
+              console.error('[Logging] Failed to log detail fetch error to D1:', logError);
+            }
+
             return post;
           }
         }
@@ -928,10 +945,19 @@ async function handleCrawling(env: Bindings) {
       await insertPostsBatch(env.DB, enrichedPosts);
       metrics.incrementSuccess();
       
-    } catch (error) {
+    } catch (error: any) {
       metrics.incrementFailure();
       metrics.addError('unknown_error');
       logger.error(`Error processing ${target.name}`, error, { siteId: target.id });
+      
+      try {
+        await env.DB.prepare(
+          'INSERT INTO crawl_logs (source_site, message) VALUES (?, ?)'
+        ).bind(target.id, error.message).run();
+      } catch (logError) {
+        console.error('[Logging] Failed to log crawl error to D1:', logError);
+      }
+      
       continue;
     }
   }
@@ -1140,6 +1166,13 @@ function isProxyAllowedUrl(urlString: string): boolean {
     if (h.includes("dogdrip.net")) return true;
     if (h.includes("fmkorea.com")) return true;
     if (h.includes("theqoo.net")) return true;
+    if (h.includes("todayhumor.co.kr")) return true;
+    if (h.includes("nate.com")) return true;
+    if (h.includes("bobaedream.co.kr")) return true;
+    if (h.includes("ruliweb.com")) return true;
+    if (h.includes("ppomppu.co.kr")) return true;
+    if (h.includes("donga.com")) return true; // mlbpark
+    if (h.includes("etoland.co.kr")) return true;
     return false;
   } catch {
     return false;
@@ -1610,6 +1643,7 @@ async function fetchTodayhumorDetail(post: Post, env: Bindings): Promise<PostDet
     post.url;
   const title =
     $('.viewSubjectDiv').clone().find('.board_icon_mini').remove().end().text().trim() ||
+    $('.view_subject_div').clone().find('.board_icon_mini').remove().end().text().trim() ||
     $('meta[property="og:title"]').attr('content')?.trim() ||
     post.title;
   const author =
@@ -2104,6 +2138,7 @@ async function fetchEtolandDetail(post: Post, env: Bindings): Promise<PostDetail
     normalizeUrl($('link[rel="canonical"]').attr('href'), 'https://www.etoland.co.kr') ||
     post.url;
   const title =
+    $('.title_wrap .title').first().text().trim() ||
     $('.board_title .subject').first().text().trim() ||
     $('.board_title').first().text().replace(/\s+/g, ' ').trim() ||
     $('meta[name="title"]').attr('content')?.trim() ||
@@ -2177,6 +2212,7 @@ async function fetchMlbparkDetail(post: Post, env: Bindings): Promise<PostDetail
     post.url;
   const title =
     $('meta[property="og:title"]').attr('content')?.replace(/\s*:\s*MLBPARK\s*$/, '').trim() ||
+    $('.titles').first().text().trim() ||
     $('.view_title').first().text().trim() ||
     $('.title').first().text().trim() ||
     post.title;
