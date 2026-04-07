@@ -746,28 +746,34 @@ async function getInterleavedPosts(
   }
 
   const interleaved: Post[] = [];
-  let progressed = true;
   let roundIndex = 0;
+  let hasMoreData = true;
 
-  while (progressed && interleaved.length < desiredCount) {
-    progressed = false;
+  while (hasMoreData && interleaved.length < desiredCount) {
+    hasMoreData = false;
+    const currentRoundPosts: Post[] = [];
 
     for (const sourceSite of options.orderedSources) {
       const bucket = siteBuckets.get(sourceSite) || [];
-      const post = bucket[roundIndex];
-      if (!post) {
-        continue;
-      }
-
-      interleaved.push(post);
-      progressed = true;
-
-      if (interleaved.length >= desiredCount) {
-        break;
+      if (roundIndex < bucket.length) {
+        currentRoundPosts.push(bucket[roundIndex]);
+        hasMoreData = true;
       }
     }
 
+    // 사이별 균형을 유지하면서(Round-robin), 같은 라운드 내에서는 시간이 최신인 것을 우선 배치
+    currentRoundPosts.sort((a, b) => {
+      const timeA = new Date(a.created_at || a.crawled_at || 0).getTime();
+      const timeB = new Date(b.created_at || b.crawled_at || 0).getTime();
+      return timeB - timeA;
+    });
+
+    interleaved.push(...currentRoundPosts);
     roundIndex += 1;
+
+    if (interleaved.length >= desiredCount) {
+      break;
+    }
   }
 
   return interleaved.slice(options.offset, options.offset + options.limit);
