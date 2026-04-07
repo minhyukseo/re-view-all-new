@@ -47,7 +47,7 @@ export default function ListPage() {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const requestInFlightRef = useRef(false);
 
-  const fetchPosts = useCallback(async (nextOffset = 0, mode: "replace" | "append" = "replace") => {
+  const fetchPosts = useCallback(async (nextOffset = 0, mode: "replace" | "append" = "replace", forceRefresh = false) => {
     if (requestInFlightRef.current) {
       return;
     }
@@ -69,6 +69,27 @@ export default function ListPage() {
     }
 
     try {
+      // --- 캐시 재사용 로직 (SessionStorage) ---
+      if (mode === "replace" && !forceRefresh && typeof window !== "undefined") {
+        const cached = sessionStorage.getItem("re_view_all_cache");
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            // 현재 선택된 커뮤니티 필터가 캐시된 필터와 정확히 일치할 때만 캐시를 재사용합니다.
+            if (JSON.stringify(parsed.selectedCommunities) === JSON.stringify(selectedCommunities)) {
+              console.log("[DEBUG] Loaded from sessionStorage cache");
+              setPosts(parsed.posts);
+              setOffset(parsed.offset);
+              setHasMore(parsed.hasMore);
+              return; // 캐시 적중 시 서버 호출 생략!
+            }
+          } catch (e) {
+            console.error("Cache parsing error", e);
+          }
+        }
+      }
+      // ---------------------------------
+
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(nextOffset),
@@ -150,6 +171,19 @@ export default function ListPage() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [fetchPosts, hasMore, isLoading, isLoadingMore, offset]);
+
+  // --- 상태가 변경될 때마다 캐시에 저장 ---
+  useEffect(() => {
+    if (posts.length > 0 && typeof window !== "undefined") {
+      sessionStorage.setItem("re_view_all_cache", JSON.stringify({
+        posts,
+        offset,
+        selectedCommunities,
+        hasMore
+      }));
+    }
+  }, [posts, offset, selectedCommunities, hasMore]);
+  // ------------------------------------
 
   const toggleCommunity = (id: string) => {
     setSelectedCommunities(prev => 
@@ -246,7 +280,7 @@ export default function ListPage() {
               setPosts([]);
               setOffset(0);
               setHasMore(true);
-              fetchPosts(0, "replace");
+              fetchPosts(0, "replace", true);
             }}
             disabled={isLoading || isLoadingMore}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-sm font-bold hover:bg-indigo-500/20 transition-all disabled:opacity-50"
