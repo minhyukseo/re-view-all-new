@@ -42,6 +42,7 @@ export default function ListPage() {
   const [selectedCommunities, setSelectedCommunities] = useState<string[]>(
     COMMUNITIES.map(c => c.id)
   );
+  const [sortMode, setSortMode] = useState<"interleaved" | "latest">("interleaved");
   const [error, setError] = useState<string | null>(null);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -69,19 +70,27 @@ export default function ListPage() {
     }
 
     try {
-      // --- 캐시 재사용 로직 (SessionStorage) ---
+      // --- 캐시 재사용 로직 (SessionStorage) + 만료 시간 (5분) ---
       if (mode === "replace" && !forceRefresh && typeof window !== "undefined") {
         const cached = sessionStorage.getItem("re_view_all_cache");
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            // 현재 선택된 커뮤니티 필터가 캐시된 필터와 정확히 일치할 때만 캐시를 재사용합니다.
-            if (JSON.stringify(parsed.selectedCommunities) === JSON.stringify(selectedCommunities)) {
-              console.log("[DEBUG] Loaded from sessionStorage cache");
+            const CACHE_EXPIRATION_MS = 5 * 60 * 1000; // 5분
+            const now = Date.now();
+            
+            const isFilterMatch = JSON.stringify(parsed.selectedCommunities) === JSON.stringify(selectedCommunities);
+            const isModeMatch = parsed.sortMode === sortMode;
+            const isFresh = now - (parsed.timestamp || 0) < CACHE_EXPIRATION_MS;
+
+            if (isFilterMatch && isModeMatch && isFresh) {
+              console.log("[DEBUG] Loaded from fresh sessionStorage cache");
               setPosts(parsed.posts);
               setOffset(parsed.offset);
               setHasMore(parsed.hasMore);
-              return; // 캐시 적중 시 서버 호출 생략!
+              requestInFlightRef.current = false;
+              setIsLoading(false);
+              return;
             }
           } catch (e) {
             console.error("Cache parsing error", e);
@@ -93,6 +102,7 @@ export default function ListPage() {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(nextOffset),
+        mode: sortMode,
       });
 
       if (selectedCommunities.length > 0) {
@@ -101,7 +111,6 @@ export default function ListPage() {
 
       const apiUrl = buildApiUrl(`/api/posts?${params.toString()}`);
       console.log('[DEBUG] Fetching posts from:', apiUrl);
-      console.log('[DEBUG] Selected communities:', selectedCommunities);
 
       const res = await fetchWithRetry(
         apiUrl,
@@ -115,9 +124,7 @@ export default function ListPage() {
       if (res.ok) {
         const data = (await res.json()) as any;
         const nextPosts = data.results || [];
-        console.log('[DEBUG] Received posts:', nextPosts.length);
-        console.log('[DEBUG] Sources in response:', [...new Set(nextPosts.map((p: any) => p.source_site))]);
-
+        
         setPosts(prev => mode === "replace" ? nextPosts : [...prev, ...nextPosts]);
         setHasMore(Boolean(data.hasMore));
         setOffset(data.nextOffset || nextOffset + nextPosts.length);
@@ -136,14 +143,14 @@ export default function ListPage() {
         setIsLoadingMore(false);
       }
     }
-  }, [selectedCommunities]);
+  }, [selectedCommunities, sortMode]);
 
   useEffect(() => {
     setPosts([]);
     setOffset(0);
     setHasMore(true);
     fetchPosts(0, "replace");
-  }, [fetchPosts]);
+  }, [fetchPosts, sortMode]); // sortMode 변경 시 재요청
 
   useEffect(() => {
     const node = sentinelRef.current;
@@ -172,17 +179,19 @@ export default function ListPage() {
     return () => observer.disconnect();
   }, [fetchPosts, hasMore, isLoading, isLoadingMore, offset]);
 
-  // --- 상태가 변경될 때마다 캐시에 저장 ---
+  // --- 상태가 변경될 때마다 캐시에 저장 (타임스탬프 포함) ---
   useEffect(() => {
     if (posts.length > 0 && typeof window !== "undefined") {
       sessionStorage.setItem("re_view_all_cache", JSON.stringify({
         posts,
         offset,
         selectedCommunities,
-        hasMore
+        hasMore,
+        sortMode,
+        timestamp: Date.now()
       }));
     }
-  }, [posts, offset, selectedCommunities, hasMore]);
+  }, [posts, offset, selectedCommunities, hasMore, sortMode]);
   // ------------------------------------
 
   const toggleCommunity = (id: string) => {
@@ -272,8 +281,18 @@ export default function ListPage() {
       <section className="flex flex-col h-[calc(100vh-6rem)] bg-surface/30 border border-white/5 rounded-3xl overflow-hidden backdrop-blur-md shadow-2xl relative">
         <div className="p-4 border-b border-white/5 bg-surface/80 backdrop-blur-xl flex items-center justify-between z-10 sticky top-0">
           <div className="flex bg-white/5 rounded-full p-1 border border-white/5">
-            <button className="px-4 py-1.5 bg-zinc-100 text-zinc-900 rounded-full text-sm font-bold shadow-sm transition-all">Trending</button>
-            <button className="px-4 py-1.5 text-zinc-400 hover:text-white rounded-full text-sm font-medium transition-all">Latest</button>
+            <button 
+              onClick={() => setSortMode("interleaved")}
+              className={`px-4 py-1.5 rounded-full text-sm font-bold shadow-sm transition-all ${sortMode === "interleaved" ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:text-white"}`}
+            >
+              Trending
+            </button>
+            <button 
+              onClick={() => setSortMode("latest")}
+              className={`px-4 py-1.5 rounded-full text-sm font-bold shadow-sm transition-all ${sortMode === "latest" ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:text-white"}`}
+            >
+              Latest
+            </button>
           </div>
           <button 
             onClick={() => {

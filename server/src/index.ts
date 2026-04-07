@@ -355,23 +355,40 @@ app.get('/api/posts', async (c) => {
     return c.json({ success: false, error: offset.error }, 400);
   }
 
+  const sortMode = c.req.query('mode') || 'interleaved';
+
   const requestedSources = (c.req.query('sources') || '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
 
   const sourceOrder = getOrderedSourceSites(requestedSources);
-  const results = await getInterleavedPosts(c.env.DB, {
-    limit: limit.value,
-    offset: offset.value,
-    orderedSources: sourceOrder,
-  });
+  
+  let results: Post[] = [];
+  if (sortMode === 'latest') {
+    const placeholders = sourceOrder.map(() => '?').join(', ');
+    const { results: rawResults } = await c.env.DB.prepare(
+      `SELECT id, source_site, title, url, author, thumbnail, created_at, crawled_at
+       FROM posts
+       WHERE source_site IN (${placeholders})
+       ORDER BY datetime(COALESCE(created_at, crawled_at)) DESC, id DESC
+       LIMIT ? OFFSET ?`
+    ).bind(...sourceOrder, limit.value, offset.value).all<Post>();
+    results = rawResults || [];
+  } else {
+    results = await getInterleavedPosts(c.env.DB, {
+      limit: limit.value,
+      offset: offset.value,
+      orderedSources: sourceOrder,
+    });
+  }
 
   return c.json({
     success: true,
     results,
     hasMore: results.length === limit.value,
     nextOffset: offset.value + results.length,
+    mode: sortMode,
   });
 });
 
