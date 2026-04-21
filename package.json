@@ -25,7 +25,7 @@
     "cf:verify:run": "node server/scripts/verify_new_items.js",
     "cf:sync:pipeline": "node server/scripts/sync_pipeline.js",
     "cloudflare:ingest:run": "npm run cf:ingest:run",
-    "deploy:cloudflare": "./scripts/deploy-cloudflare.sh",
+    "deploy:all": "bash deploy_all.sh",
     "server:dev": "npm run dev:api",
     "widgets:refresh": "node server/scripts/build_rail_widgets.js",
     "backtest": "node server/scripts/backtest_adapters.js",

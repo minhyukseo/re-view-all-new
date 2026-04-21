@@ -32,6 +32,7 @@ type Bindings = {
   USER_AGENTS: string[];
   ENVIRONMENT?: string;
   RATE_LIMIT_KV?: KVNamespace;
+  POST_QUEUE: any;
 };
 
 export interface Post {
@@ -218,7 +219,7 @@ const MAX_POST_LIMIT = 100;
 const MIN_POST_LIMIT = 1;
 const MIN_POST_OFFSET = 0;
 const DETAIL_FETCH_CONCURRENCY = 4;
-const DB_BATCH_SIZE = 30; // 50에서 30으로 축소
+const DB_BATCH_SIZE = 10; // 50에서 30, 다시 병목 방지를 위해 10으로 하향조정
 const DB_BATCH_RETRY_COUNT = 2;
 const DB_RETRY_DELAY = 500; // 재시도 시 지연 시간 (ms)
 const POST_RETENTION_DAYS = 7;
@@ -868,6 +869,9 @@ async function insertPostsBatch(db: D1Database, posts: Post[]) {
         `[Batch Insert] Failed to persist chunk ${chunkNumber} after ${DB_BATCH_RETRY_COUNT + 1} attempts: ${String(lastError)}`
       );
     }
+    
+    // SQLite_BUSY 락 충돌 방지를 위한 딜레이 추가
+    await new Promise(resolve => setTimeout(resolve, 150));
   }
 }
 
@@ -925,47 +929,16 @@ async function handleCrawling(env: Bindings) {
         continue;
       }
 
-      const enrichedPosts = await mapWithConcurrency(
-        pendingPosts,
-        DETAIL_FETCH_CONCURRENCY,
-        async (post) => {
-          try {
-            const detail = await fetchPostDetail(post, env);
-            const fallbackThumbnail =
-              post.thumbnail ||
-              detail.media.find((item) => item.type === 'image')?.url;
-            return {
-              ...post,
-              title: detail.title || post.title,
-              author: detail.author || post.author,
-              thumbnail: fallbackThumbnail,
-              body_html: detail.bodyHtml,
-              text_content: detail.textContent,
-              media_json: JSON.stringify(detail.media),
-              comments_json: JSON.stringify(detail.comments),
-              detail_fetched_at: new Date().toISOString(),
-              created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
-            } satisfies Post;
-          } catch (detailError: any) {
-            metrics.addError('detail_fetch_failed');
-            logger.error(`Failed to fetch detail for ${post.url}`, detailError, { 
-              siteId: target.id 
-            });
+      // 큐를 통한 청크 단위 비동기 적재 (128KB 제한 우회)
+      const CHUNK_SIZE = 50;
+      for (let i = 0; i < pendingPosts.length; i += CHUNK_SIZE) {
+        const chunk = pendingPosts.slice(i, i + CHUNK_SIZE);
+        await env.POST_QUEUE.send({
+          siteId: target.id,
+          posts: chunk
+        });
+      }
 
-            try {
-              await env.DB.prepare(
-                'INSERT INTO crawl_logs (source_site, url, message) VALUES (?, ?, ?)'
-              ).bind(target.id, post.url, detailError.message).run();
-            } catch (logError) {
-              console.error('[Logging] Failed to log detail fetch error to D1:', logError);
-            }
-
-            return post;
-          }
-        }
-      );
-
-      await insertPostsBatch(env.DB, enrichedPosts);
       metrics.incrementSuccess();
       
     } catch (error: any) {
@@ -2274,5 +2247,46 @@ export default {
   fetch: app.fetch,
   async scheduled(event: any, env: Bindings, ctx: any) {
     ctx.waitUntil(handleCrawling(env));
+  },
+  async queue(batch: any, env: Bindings) {
+    for (const msg of batch.messages) {
+      const { siteId, posts } = msg.body;
+      
+      const enrichedPosts = await mapWithConcurrency(
+        posts,
+        DETAIL_FETCH_CONCURRENCY,
+        async (post: Post) => {
+          try {
+            const detail = await fetchPostDetail(post, env);
+            const fallbackThumbnail = post.thumbnail || detail.media?.find((m: any) => m.type === 'image')?.url;
+            return {
+              ...post,
+              title: detail.title || post.title,
+              author: detail.author || post.author,
+              thumbnail: fallbackThumbnail,
+              body_html: detail.bodyHtml,
+              text_content: detail.textContent,
+              media_json: JSON.stringify(detail.media),
+              comments_json: JSON.stringify(detail.comments),
+              detail_fetched_at: new Date().toISOString(),
+              created_at: normalizeCreatedAt(detail.createdAt || post.created_at),
+            } satisfies Post;
+          } catch (error) {
+            console.error(`[Queue Consumer ERROR] Failed to fetch detail for ${post.url}:`, error);
+            try {
+              await env.DB.prepare('INSERT INTO crawl_logs (source_site, url, message) VALUES (?, ?, ?)')
+                .bind(siteId, post.url, String(error)).run();
+            } catch {}
+            return post;
+          }
+        }
+      );
+
+      if (enrichedPosts.length > 0) {
+        await insertPostsBatch(env.DB, enrichedPosts);
+      }
+      
+      msg.ack();
+    }
   }
 };
