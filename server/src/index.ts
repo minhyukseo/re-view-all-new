@@ -82,6 +82,8 @@ const app = new Hono<{ Bindings: Bindings }>();
 const allowedOrigins = [
   'https://review-all.pages.dev',
   'https://re-view-all-web.seomh81.workers.dev',
+  'https://new.re-view-all.com',
+  'https://re-view-all.com',
   'http://localhost:3000',
   'http://localhost:4173',
 ];
