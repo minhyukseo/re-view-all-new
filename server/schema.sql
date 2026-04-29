@@ -1,22 +1,29 @@
 -- Cloudflare D1 Database Schema
--- 커뮤니티 게시글 메타데이터를 저장하기 위한 테이블 구조
-
 CREATE TABLE IF NOT EXISTS posts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_site TEXT NOT NULL,           -- 사이트 식별자 (예: dogdrip, dcinside)
-  title TEXT NOT NULL,                  -- 게시글 제목
-  url TEXT UNIQUE NOT NULL,             -- 원문 URL (중복 적재 방지 필수)
-  author TEXT,                          -- 작성자
-  thumbnail TEXT,                       -- 목록용 썸네일 이미지 URL (있을 경우)
-  body_html TEXT,                       -- 크롤링한 본문 HTML
-  text_content TEXT,                    -- 본문 텍스트
-  media_json TEXT,                      -- 본문 미디어 JSON 배열
-  comments_json TEXT,                   -- 댓글 JSON 배열
-  detail_fetched_at DATETIME,           -- 상세 수집 시각
-  created_at DATETIME DEFAULT (DATETIME('now', 'localtime')), -- 원문 작성 시간
-  crawled_at DATETIME DEFAULT (DATETIME('now', 'localtime'))  -- 시스템 수집 시간
+  source_site TEXT NOT NULL,
+  title TEXT NOT NULL,
+  url TEXT UNIQUE NOT NULL,
+  author TEXT,
+  thumbnail TEXT,
+  body_html TEXT,
+  text_content TEXT,
+  media_json TEXT,
+  comments_json TEXT,
+  detail_fetched_at DATETIME,
+  created_at DATETIME DEFAULT (DATETIME('now', 'localtime')),
+  crawled_at DATETIME DEFAULT (DATETIME('now', 'localtime'))
 );
 
--- 인덱스 생성: 필터링 및 정렬 성능 최적화
 CREATE INDEX IF NOT EXISTS idx_posts_source_site ON posts(source_site);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
+
+CREATE TABLE IF NOT EXISTS crawl_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_site TEXT,
+  url TEXT,
+  message TEXT,
+  created_at DATETIME DEFAULT (DATETIME('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawl_logs_created_at ON crawl_logs(created_at);
