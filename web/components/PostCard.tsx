@@ -1,7 +1,9 @@
+"use client";
 import Link from "next/link";
 import { ArrowUpRight, Layers } from "lucide-react";
 import { formatRelativeTime } from "@/lib/time";
 import { decodeHtmlEntities } from "@/lib/decode";
+import { getProxiedImageUrl } from "@/lib/media";
 
 interface Post {
   id: number;
@@ -11,6 +13,7 @@ interface Post {
   author: string;
   created_at: string;
   crawled_at?: string;
+  thumbnail?: string;
 }
 
 const SITE_COLORS: Record<string, string> = {
@@ -45,10 +48,20 @@ export function PostCard({ post }: { post: Post }) {
 
   const timeInfo = formatRelativeTime(post.crawled_at || post.created_at);
 
+  const handleRead = () => {
+    try {
+      const stored = localStorage.getItem("rv_read_posts");
+      const readSet = stored ? new Set(JSON.parse(stored)) : new Set();
+      readSet.add(post.id);
+      localStorage.setItem("rv_read_posts", JSON.stringify(Array.from(readSet)));
+    } catch (e) {}
+  };
+
   return (
     <Link 
       href={`/post/${post.id}`}
-      className="block p-5 bg-zinc-900/40 border border-white/5 rounded-2xl hover:bg-zinc-800/60 hover:border-white/10 transition-all group relative overflow-hidden"
+      onClick={handleRead}
+      className="block p-5 bg-zinc-900/40 border border-white/5 rounded-lg hover:bg-zinc-800/60 hover:border-white/10 transition-all group relative overflow-hidden"
     >
       <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-indigo-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity transform -translate-x-full group-hover:translate-x-0"></div>
       
@@ -78,12 +91,25 @@ export function PostCard({ post }: { post: Post }) {
           </div>
         </div>
         
-        {/* Thumbnail Placeholder */}
-        <div className="hidden sm:block shrink-0 w-24 h-24 rounded-xl bg-zinc-900/80 border border-white/5 overflow-hidden group-hover:border-white/20 transition-colors relative shadow-inner">
-           <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent"></div>
-           <div className="w-full h-full flex items-center justify-center text-zinc-700">
-             <Layers size={20} />
-           </div>
+        {/* Thumbnail Display */}
+        <div className="hidden sm:block shrink-0 w-24 h-24 rounded-lg bg-zinc-900/80 border border-white/5 overflow-hidden group-hover:border-indigo-500/30 transition-all relative shadow-2xl group-hover:shadow-indigo-500/10">
+           {post.thumbnail ? (
+             <div className="w-full h-full relative">
+               <img 
+                 src={getProxiedImageUrl(post.thumbnail, { width: 120, still: true })}
+                 alt=""
+                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                 loading="lazy"
+                 referrerPolicy="no-referrer"
+               />
+               <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+             </div>
+           ) : (
+             <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-zinc-700 group-hover:text-zinc-500 transition-colors bg-gradient-to-br from-white/3 to-transparent">
+               <Layers size={20} strokeWidth={1.5} />
+               <span className="text-[9px] font-medium opacity-50 uppercase tracking-tighter">No Image</span>
+             </div>
+           )}
         </div>
       </div>
     </Link>

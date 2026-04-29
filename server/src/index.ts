@@ -483,6 +483,23 @@ app.get('/api/proxy-media', async (c) => {
     return c.text('Forbidden', 403);
   }
 
+  const width = c.req.query('w');
+  const isStill = c.req.query('still') === 'true';
+  const isGif = targetUrl.toLowerCase().endsWith('.gif');
+
+  // 최적화를 위해 wsrv.nl 활용 (리사이징 또는 GIF 정지화면 요청 시)
+  if ((width || (isStill && isGif)) && !targetUrl.includes('dcinside')) {
+     // 디시인사이드는 Referer 체크가 엄격하여 wsrv.nl이 직접 가져오기 어려우므로 일반 프록시 수행
+     // 그 외 사이트는 wsrv.nl을 통해 리사이징된 이미지를 반환
+     const wsrvUrl = new URL('https://wsrv.nl/');
+     wsrvUrl.searchParams.set('url', targetUrl);
+     if (width) wsrvUrl.searchParams.set('w', width);
+     if (isStill && isGif) wsrvUrl.searchParams.set('n', '-1'); // GIF 첫 프레임 추출
+     wsrvUrl.searchParams.set('output', 'webp'); // 대역폭 절감을 위해 webp 강제
+     
+     return fetch(wsrvUrl.toString());
+  }
+
   const agents = c.env.USER_AGENTS;
   const userAgent =
     Array.isArray(agents) && agents.length > 0
@@ -1449,6 +1466,12 @@ function extractMedia($root: Cheerio<Element>, baseUrl: string): MediaItem[] {
 
   for (let index = 0; index < videoNodes.length; index += 1) {
     const node = videoNodes.eq(index);
+    const poster = normalizeUrl(node.attr('poster'), baseUrl);
+    if (poster && !seen.has(poster)) {
+      seen.add(poster);
+      items.push({ type: 'image', url: poster }); // 포스터는 이미지로 취급하여 썸네일로 활용 가능케 함
+    }
+
     const src = normalizeUrl(node.attr('src') || node.find('source').attr('src'), baseUrl);
     if (!src || seen.has(src)) continue;
     seen.add(src);
@@ -2381,7 +2404,12 @@ export default {
         async (post: Post) => {
           try {
             const detail = await fetchPostDetail(post, env);
-            const fallbackThumbnail = post.thumbnail || detail.media?.find((m: any) => m.type === 'image')?.url;
+            // 썸네일 선정 우선순위: 원본 썸네일 -> 이미지 미디어 -> 비디오 포스터 순
+            const fallbackThumbnail = 
+              post.thumbnail || 
+              detail.media?.find((m: any) => m.type === 'image')?.url ||
+              detail.media?.find((m: any) => m.type === 'video' && (m as any).poster)?.url;
+
             return {
               ...post,
               title: detail.title || post.title,
